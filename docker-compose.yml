@@ -1,0 +1,49 @@
+# CELTTO-TOTEMS en Linux / Proxmox con PostgreSQL
+# Uso: docker compose up -d --build
+# Luego: docker compose exec app npm run migrate
+#        docker compose exec app npm run owner:create
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: celtto_totems
+      POSTGRES_USER: celtto
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cambiar-esta-clave}
+    volumes:
+      - celtto_pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U celtto -d celtto_totems"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 8080
+      HOST: 0.0.0.0
+      APP_TIMEZONE: ${APP_TIMEZONE:-America/Argentina/Cordoba}
+      DB_CLIENT: postgres
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DATABASE: celtto_totems
+      POSTGRES_USER: celtto
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cambiar-esta-clave}
+      POSTGRES_SSL: "false"
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      SESSION_HOURS: ${SESSION_HOURS:-12}
+      AUTO_MIGRATE: ${AUTO_MIGRATE:-true}
+      LOG_HTTP: ${LOG_HTTP:-true}
+    ports:
+      - "8080:8080"
+
+volumes:
+  celtto_pgdata:
