@@ -36,7 +36,7 @@ export async function createDb(cfg: Config): Promise<{ db: Kysely<Database>; cli
     return { db: new Kysely<Database>({ dialect: new PostgresDialect({ pool }) }), client: 'postgres' }
   }
 
-  // SQL Server (futuro: base en Windows)
+  
   const Tedious = await import('tedious')
   const Tarn = await import('tarn')
   const T = (Tedious as any).default ?? Tedious
@@ -61,7 +61,6 @@ export async function createDb(cfg: Config): Promise<{ db: Kysely<Database>; cli
   return { db: new Kysely<Database>({ dialect }), client: 'mssql' }
 }
 
-/** INSERT que devuelve el id generado. MSSQL usa OUTPUT; Postgres y SQLite usan RETURNING. */
 export async function insertId(
   ctx: Ctx,
   q: Kysely<any>,

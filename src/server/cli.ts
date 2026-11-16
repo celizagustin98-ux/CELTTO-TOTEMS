@@ -13,7 +13,7 @@ async function ask(q: string) { const rl = createInterface({ input: process.stdi
 
 async function main() {
   if (cmd === 'db:script') {
-    // Genera el T-SQL de las migraciones sin conectarse a ninguna base (para que IT lo revise o ejecute a mano).
+    
     const out: string[] = []
     const db = new Kysely<any>({
       dialect: { createAdapter: () => new MssqlAdapter(), createDriver: () => new DummyDriver(), createIntrospector: (d) => new MssqlIntrospector(d), createQueryCompiler: () => new MssqlQueryCompiler() },

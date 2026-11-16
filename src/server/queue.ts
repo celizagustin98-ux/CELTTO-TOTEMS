@@ -12,7 +12,7 @@ async function nextNumber(trx: any, key: string): Promise<number> {
   for (let i = 0; i < 3; i++) {
     const r = await trx.updateTable('counters').set((eb: any) => ({ counter_value: eb('counter_value', '+', 1) })).where('counter_key', '=', key).executeTakeFirst()
     if (Number(r.numUpdatedRows) > 0) break
-    try { await trx.insertInto('counters').values({ counter_key: key, counter_value: 0 }).execute() } catch { /* otro proceso lo creó primero */ }
+    try { await trx.insertInto('counters').values({ counter_key: key, counter_value: 0 }).execute() } catch {  }
   }
   const row = await trx.selectFrom('counters').select('counter_value').where('counter_key', '=', key).executeTakeFirstOrThrow()
   return Number(row.counter_value)
@@ -122,7 +122,6 @@ export async function transfer(ctx: Ctx, u: AuthUser, targetSectorId: number) {
     'transferred', `-> ${target.name}`, [target.id])
 }
 
-/* ---------- estadísticas ---------- */
 type Row = { sector_id: number; status: string; priority: number; created_at: string; called_at: string | null; started_at: string | null; finished_at: string | null }
 
 function summarize(rows: Row[]) {

@@ -35,7 +35,7 @@ export async function getSettings(ctx: Ctx): Promise<Settings> {
   const out: Record<string, unknown> = { ...DEFAULT_SETTINGS }
   for (const r of rows) {
     if (!(r.setting_key in DEFAULT_SETTINGS)) continue
-    try { out[r.setting_key] = JSON.parse(r.setting_value) } catch { /* valor inválido: se usa el default */ }
+    try { out[r.setting_key] = JSON.parse(r.setting_value) } catch {  }
   }
   return out as Settings
 }

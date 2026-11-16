@@ -5,7 +5,6 @@ export type LiveMsg =
   | { type: 'hello' } | { type: 'config' } | { type: 'queue'; sectorIds: number[] }
   | { type: 'call'; recall: boolean; ticket: CallTicket }
 
-/** Conexión en tiempo real con reconexión automática. Al reconectar emite "config" para que cada pantalla se actualice. */
 export function useLive(onMsg: (m: LiveMsg) => void) {
   const cb = useRef(onMsg)
   cb.current = onMsg
@@ -13,7 +12,7 @@ export function useLive(onMsg: (m: LiveMsg) => void) {
     let ws: WebSocket | null = null, stop = false, retry = 0, timer: ReturnType<typeof setTimeout>
     const open = () => {
       ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`)
-      ws.onmessage = (e) => { try { cb.current(JSON.parse(e.data)) } catch { /* mensaje inválido */ } }
+      ws.onmessage = (e) => { try { cb.current(JSON.parse(e.data)) } catch {  } }
       ws.onopen = () => { if (retry > 0) cb.current({ type: 'config' }); retry = 0 }
       ws.onclose = () => { if (!stop) { retry++; timer = setTimeout(open, Math.min(1000 * 2 ** retry, 10000)) } }
     }
@@ -31,7 +30,7 @@ export function useLoad<T>(fn: () => Promise<T>, deps: unknown[] = []) {
   const reload = async () => {
     try { setData(await fnRef.current()); setError(null) } catch (e) { setError((e as Error).message) } finally { setLoading(false) }
   }
-  useEffect(() => { void reload() }, deps) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { void reload() }, deps) 
   return { data, error, loading, reload, setData }
 }
 

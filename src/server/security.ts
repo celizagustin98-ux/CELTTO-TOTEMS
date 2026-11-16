@@ -22,7 +22,7 @@ export const newToken = () => randomBytes(32).toString('base64url')
 
 export class RateLimiter {
   private hits = new Map<string, number[]>()
-  /** true si el intento está permitido */
+  
   hit(key: string, max: number, windowMs: number): boolean {
     const now = Date.now()
     const arr = (this.hits.get(key) ?? []).filter((t) => now - t < windowMs)

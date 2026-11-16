@@ -15,7 +15,7 @@ export async function buildApp(ctx: Ctx) {
   await app.register(cookie)
   await app.register(websocket)
   app.decorateRequest('user', null)
-  // acepta POST con Content-Type JSON y cuerpo vacío (acciones sin datos)
+  
   app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
     try { done(null, body ? JSON.parse(body as string) : {}) } catch (e) { done(Object.assign(e as Error, { statusCode: 400, message: 'JSON inválido' })) }
   })

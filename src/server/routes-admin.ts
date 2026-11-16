@@ -29,7 +29,7 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   const pre = { preHandler: requireRole(ctx, 'owner') }
   const sectorExists = async (id: number) => { if (!(await ctx.db.selectFrom('sectors').select('id').where('id', '=', id).where('active', '=', 1).executeTakeFirst())) throw new HttpError(404, 'La secretaría no existe') }
 
-  /* ---- secretarías y botones ---- */
+  
   app.get('/api/admin/sectors', pre, async () => {
     const sectors = await ctx.db.selectFrom('sectors').selectAll().where('active', '=', 1).orderBy('sort_order').orderBy('name').execute()
     const buttons = await ctx.db.selectFrom('buttons').selectAll().where('active', '=', 1).orderBy('sort_order').orderBy('id').execute()
@@ -92,7 +92,7 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return { ok: true }
   })
 
-  /* ---- usuarios (solo secretarias; el dueño se crea por línea de comandos) ---- */
+  
   app.get('/api/admin/users', pre, async () => {
     const rows = await ctx.db.selectFrom('users').leftJoin('sectors', 'sectors.id', 'users.sector_id')
       .select(['users.id', 'users.username', 'users.display_name', 'users.sector_id', 'users.desk', 'users.active', 'sectors.name as sector_name'])
@@ -124,7 +124,7 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return { ok: true }
   })
 
-  /* ---- configuración, resumen, reportes y sistema ---- */
+  
   app.get('/api/admin/settings', pre, async () => getSettings(ctx))
   app.put('/api/admin/settings', pre, async (req) => {
     await saveSettings(ctx, settingsPatch.parse(req.body))

@@ -6,16 +6,15 @@ export function fillTemplate(tpl: string, t: Pick<CallTicket, 'code' | 'prefix' 
   return tpl.replace(/\{(\w+)\}/g, (_, k) => map[k] ?? '')
 }
 
-/** Aviso sonoro (campanilla) y voz del navegador. Los navegadores exigen un toque del usuario para habilitar el audio. */
 export class Announcer {
   private ctx: AudioContext | null = null
   constructor() { try { this.ctx = new AudioContext() } catch { this.ctx = null } }
   get ready() { return this.ctx?.state === 'running' }
   async unlock() {
     await this.ctx?.resume()
-    try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u) } catch { /* sin voz */ }
+    try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u) } catch {  }
   }
-  /** Reproduce la campanilla y devuelve cuántos ms dura, para encadenar la voz. */
+  
   chime(volume: number): number {
     const c = this.ctx
     if (!c || c.state !== 'running') return 0
@@ -38,6 +37,6 @@ export class Announcer {
       u.lang = v?.lang ?? 'es-AR'; if (v) u.voice = v
       u.rate = rate
       speechSynthesis.speak(u)
-    } catch { /* sin voz */ }
+    } catch {  }
   }
 }

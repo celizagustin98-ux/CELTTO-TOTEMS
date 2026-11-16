@@ -20,13 +20,4 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
-          <Route path="/master/*" element={<RequireRole role="owner"><Master /></RequireRole>} />
-          <Route path="/panel" element={<RequireRole role="secretary"><Desk /></RequireRole>} />
-          <Route path="/totem" element={<Totem />} />
-          <Route path="/tv" element={<Tv />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </ToastProvider>
-    </AuthProvider>
-  )
-}
+          <Route path="/master

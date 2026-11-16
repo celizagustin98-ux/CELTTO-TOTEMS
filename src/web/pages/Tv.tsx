@@ -25,7 +25,7 @@ export default function Tv() {
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   const load = useCallback(async () => {
-    try { setSt(await api<TvState>(`/api/public/tv${filter ? `?sectors=${encodeURIComponent(filter)}` : ''}`)) } catch { /* se reintenta con el próximo evento */ }
+    try { setSt(await api<TvState>(`/api/public/tv${filter ? `?sectors=${encodeURIComponent(filter)}` : ''}`)) } catch {  }
   }, [filter])
   useEffect(() => { void load(); const t = setInterval(load, 30000); return () => clearInterval(t) }, [load])
   useEffect(() => { ann.current = new Announcer(); const t = setTimeout(() => setLocked(!ann.current?.ready), 400); return () => clearTimeout(t) }, [])
