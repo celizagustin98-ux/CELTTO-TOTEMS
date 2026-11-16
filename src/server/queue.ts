@@ -23,6 +23,12 @@ export async function createTicket(ctx: Ctx, buttonId: number) {
   if (!btn) throw new HttpError(404, 'Este botón no está disponible')
   const sector = await ctx.db.selectFrom('sectors').selectAll().where('id', '=', btn.target_sector_id).where('active', '=', 1).executeTakeFirst()
   if (!sector) throw new HttpError(409, 'La cola de este botón no está activa')
+  let priorityWeight = btn.priority
+  let priorityId = (btn as any).priority_id ?? null
+  if (priorityId) {
+    const pr = await ctx.db.selectFrom('priorities').select(['id', 'weight']).where('id', '=', priorityId).where('active', '=', 1).executeTakeFirst()
+    if (pr) { priorityWeight = pr.weight; priorityId = pr.id }
+  }
   const date = today(ctx)
   const now = nowIso()
   const t = await ctx.db.transaction().execute(async (trx) => {
@@ -30,15 +36,15 @@ export async function createTicket(ctx: Ctx, buttonId: number) {
     const code = `${btn.prefix}-${String(n).padStart(3, '0')}`
     const id = await insertId(ctx, trx, 'tickets', {
       code, prefix: btn.prefix, number: n, business_date: date, button_id: btn.id, sector_id: sector.id, origin_sector_id: btn.sector_id,
-      priority: btn.priority, status: 'waiting', created_at: now, called_at: null, last_call_at: null, started_at: null, finished_at: null,
-      called_by: null, desk: null, recall_count: 0,
+      priority: priorityWeight, priority_id: priorityId, status: 'waiting', created_at: now, called_at: null, last_call_at: null, started_at: null, finished_at: null,
+      called_by: null, desk: null, desk_id: null, recall_count: 0, print_count: 0,
     })
     await trx.insertInto('ticket_events').values({ ticket_id: id, type: 'created', user_id: null, data: null, created_at: now }).execute()
     return { id, code, number: n }
   })
   const ahead = await ctx.db.selectFrom('tickets').select((eb) => eb.fn.countAll<number>().as('n'))
     .where('sector_id', '=', sector.id).where('status', '=', 'waiting').where('business_date', '=', date).where('id', '!=', t.id)
-    .where((eb) => eb.or([eb('priority', '>', btn.priority), eb.and([eb('priority', '=', btn.priority), eb('created_at', '<=', now)])]))
+    .where((eb) => eb.or([eb('priority', '>', priorityWeight), eb.and([eb('priority', '=', priorityWeight), eb('created_at', '<=', now)])]))
     .executeTakeFirstOrThrow()
   ctx.hub.broadcast({ type: 'queue', sectorIds: [sector.id] })
   return { id: t.id, code: t.code, label: btn.label, sectorName: sector.name, color: btn.color ?? sector.color, waitingAhead: Number(ahead.n), createdAt: now }
@@ -66,7 +72,7 @@ async function takeTicket(ctx: Ctx, u: AuthUser, pick: () => Promise<number | un
     const id = await pick()
     if (id === undefined) throw new HttpError(404, 'No hay turnos en espera')
     const now = nowIso()
-    const r = await ctx.db.updateTable('tickets').set({ status: 'called', called_at: now, last_call_at: now, called_by: u.id, desk: u.desk, recall_count: 0 })
+    const r = await ctx.db.updateTable('tickets').set({ status: 'called', called_at: now, last_call_at: now, called_by: u.id, desk: u.desk, desk_id: u.deskId, recall_count: 0 })
       .where('id', '=', id).where('status', '=', 'waiting').where('sector_id', '=', sid).executeTakeFirst()
     if (Number(r.numUpdatedRows) > 0) {
       await ctx.db.insertInto('ticket_events').values({ ticket_id: id, type: 'called', user_id: u.id, data: null, created_at: now }).execute()

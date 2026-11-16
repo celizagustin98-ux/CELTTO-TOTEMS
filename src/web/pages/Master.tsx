@@ -1,18 +1,24 @@
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
-import { BarChart3, ExternalLink, Layers, LayoutGrid, LogOut, Settings as Cog, Users } from 'lucide-react'
+import { BarChart3, ExternalLink, Layers, LayoutGrid, LogOut, Monitor, Settings as Cog, Users, Armchair, Flag } from 'lucide-react'
 import { useAuth } from '../auth'
 import Overview from './MasterOverview'
 import Sectors from './MasterSectors'
 import UsersPage from './MasterUsers'
 import SettingsPage from './MasterSettings'
 import Reports from './MasterReports'
+import Priorities from './MasterPriorities'
+import Stations from './MasterStations'
+import Desks from './MasterDesks'
 
 const NAV = [
   { to: '/master', end: true, label: 'Resumen', icon: LayoutGrid },
   { to: '/master/secretarias', label: 'Secretarías y botones', icon: Layers },
+  { to: '/master/prioridades', label: 'Prioridades', icon: Flag },
+  { to: '/master/escritorios', label: 'Escritorios', icon: Armchair },
+  { to: '/master/estaciones', label: 'Tótems y TVs', icon: Monitor },
   { to: '/master/usuarios', label: 'Usuarios', icon: Users },
   { to: '/master/configuracion', label: 'Configuración', icon: Cog },
-  { to: '/master/reportes', label: 'Reportes', icon: BarChart3 },
+  { to: '/master/reportes', label: 'Estadísticas', icon: BarChart3 },
 ]
 
 export default function Master() {
@@ -42,6 +48,9 @@ export default function Master() {
             <Route path="usuarios" element={<UsersPage />} />
             <Route path="configuracion" element={<SettingsPage />} />
             <Route path="reportes" element={<Reports />} />
+          <Route path="prioridades" element={<Priorities />} />
+          <Route path="escritorios" element={<Desks />} />
+          <Route path="estaciones" element={<Stations />} />
             <Route path="*" element={<Navigate to="/master" replace />} />
           </Routes>
         </div>

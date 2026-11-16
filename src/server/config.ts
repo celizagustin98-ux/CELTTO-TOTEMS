@@ -32,6 +32,7 @@ export interface Config {
   webDir: string
   autoMigrate: boolean
   logger: boolean
+  redisUrl?: string
 }
 
 const bool = (v: string | undefined, d: boolean) =>
@@ -70,5 +71,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webDir: `${root}dist/web`,
     autoMigrate: bool(env.AUTO_MIGRATE, client !== 'mssql'),
     logger: bool(env.LOG_HTTP, true),
+    redisUrl: env.REDIS_URL || undefined,
   }
 }

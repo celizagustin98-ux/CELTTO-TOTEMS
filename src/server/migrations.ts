@@ -38,6 +38,7 @@ export const migrations: Record<string, Migration> = {
         .addColumn('color', 'varchar(9)')
         .addColumn('prefix', 'varchar(3)', (c) => c.notNull())
         .addColumn('priority', 'integer', (c) => c.notNull().defaultTo(0))
+        .addColumn('priority_id', 'integer')
         .addColumn('sort_order', 'integer', (c) => c.notNull().defaultTo(0))
         .addColumn('active', 'integer', (c) => c.notNull().defaultTo(1))
         .execute()
@@ -51,6 +52,7 @@ export const migrations: Record<string, Migration> = {
         .addColumn('role', 'varchar(20)', (c) => c.notNull())
         .addColumn('sector_id', 'integer', (c) => c.references('sectors.id'))
         .addColumn('desk', 'varchar(60)')
+        .addColumn('desk_id', 'integer')
         .addColumn('active', 'integer', (c) => c.notNull().defaultTo(1))
         .addColumn('created_at', 'varchar(30)', (c) => c.notNull())
         .execute()
@@ -74,6 +76,7 @@ export const migrations: Record<string, Migration> = {
         .addColumn('sector_id', 'integer', (c) => c.notNull().references('sectors.id'))
         .addColumn('origin_sector_id', 'integer', (c) => c.notNull().references('sectors.id'))
         .addColumn('priority', 'integer', (c) => c.notNull().defaultTo(0))
+        .addColumn('priority_id', 'integer')
         .addColumn('status', 'varchar(12)', (c) => c.notNull())
         .addColumn('created_at', 'varchar(30)', (c) => c.notNull())
         .addColumn('called_at', 'varchar(30)')
@@ -82,19 +85,12 @@ export const migrations: Record<string, Migration> = {
         .addColumn('finished_at', 'varchar(30)')
         .addColumn('called_by', 'integer', (c) => c.references('users.id'))
         .addColumn('desk', 'varchar(60)')
+        .addColumn('desk_id', 'integer')
         .addColumn('recall_count', 'integer', (c) => c.notNull().defaultTo(0))
+        .addColumn('print_count', 'integer', (c) => c.notNull().defaultTo(0))
         .execute()
-      await db.schema
-        .createIndex('ix_tickets_queue')
-        .on('tickets')
-        .columns(['sector_id', 'status', 'business_date'])
-        .execute()
-      await db.schema
-        .createIndex('ux_tickets_code_day')
-        .on('tickets')
-        .columns(['business_date', 'code'])
-        .unique()
-        .execute()
+      await db.schema.createIndex('ix_tickets_queue').on('tickets').columns(['sector_id', 'status', 'business_date']).execute()
+      await db.schema.createIndex('ux_tickets_code_day').on('tickets').columns(['business_date', 'code']).unique().execute()
 
       await db.schema
         .createTable('counters')
@@ -116,6 +112,75 @@ export const migrations: Record<string, Migration> = {
         .createTable('settings')
         .addColumn('setting_key', 'varchar(60)', (c) => c.primaryKey().notNull())
         .addColumn('setting_value', 'varchar(2000)', (c) => c.notNull())
+        .execute()
+    },
+  },
+  '002_ops': {
+    async up(db: Kysely<any>) {
+      const id = pkId(db)
+
+      await db.schema
+        .createTable('priorities')
+        .addColumn('id', 'integer', id)
+        .addColumn('name', 'varchar(80)', (c) => c.notNull())
+        .addColumn('weight', 'integer', (c) => c.notNull().defaultTo(0))
+        .addColumn('color', 'varchar(9)')
+        .addColumn('sort_order', 'integer', (c) => c.notNull().defaultTo(0))
+        .addColumn('active', 'integer', (c) => c.notNull().defaultTo(1))
+        .execute()
+
+      await db.schema
+        .createTable('desks')
+        .addColumn('id', 'integer', id)
+        .addColumn('sector_id', 'integer', (c) => c.notNull().references('sectors.id'))
+        .addColumn('name', 'varchar(80)', (c) => c.notNull())
+        .addColumn('code', 'varchar(20)', (c) => c.notNull())
+        .addColumn('active', 'integer', (c) => c.notNull().defaultTo(1))
+        .addColumn('sort_order', 'integer', (c) => c.notNull().defaultTo(0))
+        .execute()
+
+      await db.schema
+        .createTable('stations')
+        .addColumn('id', 'integer', id)
+        .addColumn('kind', 'varchar(10)', (c) => c.notNull())
+        .addColumn('name', 'varchar(100)', (c) => c.notNull())
+        .addColumn('sector_id', 'integer', (c) => c.references('sectors.id'))
+        .addColumn('device_key', 'varchar(64)', (c) => c.notNull().unique())
+        .addColumn('active', 'integer', (c) => c.notNull().defaultTo(1))
+        .addColumn('last_seen_at', 'varchar(30)')
+        .addColumn('created_at', 'varchar(30)', (c) => c.notNull())
+        .execute()
+
+      await db.schema
+        .createTable('audit_log')
+        .addColumn('id', 'integer', id)
+        .addColumn('user_id', 'integer')
+        .addColumn('action', 'varchar(60)', (c) => c.notNull())
+        .addColumn('entity', 'varchar(40)')
+        .addColumn('entity_id', 'varchar(40)')
+        .addColumn('detail', 'varchar(2000)')
+        .addColumn('ip', 'varchar(60)')
+        .addColumn('created_at', 'varchar(30)', (c) => c.notNull())
+        .execute()
+      await db.schema.createIndex('ix_audit_created').on('audit_log').columns(['created_at']).execute()
+
+      await db.schema
+        .createTable('day_closes')
+        .addColumn('id', 'integer', id)
+        .addColumn('business_date', 'varchar(10)', (c) => c.notNull().unique())
+        .addColumn('closed_by', 'integer')
+        .addColumn('notes', 'varchar(500)')
+        .addColumn('snapshot', 'varchar(8000)')
+        .addColumn('created_at', 'varchar(30)', (c) => c.notNull())
+        .execute()
+
+      await db
+        .insertInto('priorities')
+        .values([
+          { name: 'Normal', weight: 0, color: '#64748b', sort_order: 1, active: 1 },
+          { name: 'Preferencial', weight: 10, color: '#2563eb', sort_order: 2, active: 1 },
+          { name: 'Urgente', weight: 20, color: '#dc2626', sort_order: 3, active: 1 },
+        ])
         .execute()
     },
   },

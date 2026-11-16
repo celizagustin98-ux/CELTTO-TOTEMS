@@ -13,8 +13,10 @@ interface TvState {
 
 export default function Tv() {
   const now = useNow(10000)
-  const filter = new URLSearchParams(location.search).get('sectors') ?? ''
+  const params = new URLSearchParams(location.search)
+  const filter = params.get('sectors') ?? ''
   const ids = filter.split(',').map(Number).filter((n) => n > 0)
+  const deviceKey = params.get('deviceKey') || localStorage.getItem('celtto.tv.device') || ''
   const [st, setSt] = useState<TvState | null>(null)
   const [featured, setFeatured] = useState<{ t: Omit<CallTicket, 'at'>; recall: boolean } | null>(null)
   const [flash, setFlash] = useState(0)
@@ -25,8 +27,8 @@ export default function Tv() {
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   const load = useCallback(async () => {
-    try { setSt(await api<TvState>(`/api/public/tv${filter ? `?sectors=${encodeURIComponent(filter)}` : ''}`)) } catch {  }
-  }, [filter])
+    try { const q = new URLSearchParams(); if (filter) q.set('sectors', filter); if (deviceKey) q.set('deviceKey', deviceKey); setSt(await api<TvState>(`/api/public/tv${q.toString() ? `?${q}` : ''}`)) } catch {  }
+  }, [filter, deviceKey])
   useEffect(() => { void load(); const t = setInterval(load, 30000); return () => clearInterval(t) }, [load])
   useEffect(() => { ann.current = new Announcer(); const t = setTimeout(() => setLocked(!ann.current?.ready), 400); return () => clearTimeout(t) }, [])
   useEffect(() => { if (!featured && st?.recent[0]) setFeatured({ t: st.recent[0], recall: false }) }, [st, featured])
