@@ -1,3 +1,6 @@
+import { useTranslation } from 'react-i18next'
+import { motion, AnimatePresence } from 'framer-motion'
+import { LanguageSwitcher } from '../components/LanguageSwitcher'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, type Settings } from '../lib/api'
 import { clock, textOn } from '../lib/format'
@@ -11,6 +14,7 @@ interface Issued { code: string; label: string; sectorName: string; color: strin
 const KEY = 'celtto.totem.sector'
 
 export default function Totem() {
+  const { t } = useTranslation()
   const now = useNow(15000)
   const [data, setData] = useState<{ sectors: PubSector[]; settings: PubSettings } | null>(null)
   const [error, setError] = useState('')
@@ -40,7 +44,7 @@ export default function Totem() {
     } catch (e) { setFail((e as Error).message); setTimeout(() => setFail(''), 6000); void load() } finally { setBusy(false) }
   }
 
-  if (!data) return <div className="grid h-full place-items-center bg-ink p-8 text-center text-white">{error ? <div><div className="display text-3xl">No hay conexión con el sistema</div><p className="mt-2 text-white/70">{error}. Reintentando…</p></div> : <div className="h-8 w-8 animate-spin rounded-full border-4 border-white/20 border-t-white" />}</div>
+  if (!data) return <div className="grid h-full place-items-center bg-ink p-8 text-center text-white">{error ? <div><div className="display text-3xl">{t('totem.offline')}</div><p className="mt-2 text-white/70">{error}</p><LanguageSwitcher className="mt-4 text-white" /></div> : <div className="h-8 w-8 animate-spin rounded-full border-4 border-white/20 border-t-white" />}</div>
   const sector = data.sectors.find((s) => s.id === sectorId)
   const org = data.settings.org_name
 
@@ -64,7 +68,7 @@ export default function Totem() {
   return (
     <div className="flex h-full flex-col bg-paper">
       <header className="relative flex items-center justify-between px-8 py-5" style={{ background: sector.color, color: textOn(sector.color) }}>
-        <button aria-label="Administración del tótem" onClick={corner} className="absolute left-0 top-0 h-16 w-16 opacity-0" /><div className="display text-3xl font-semibold">{sector.name}</div>
+        <button aria-label="Administración del tótem" onClick={corner} className="absolute left-0 top-0 h-16 w-16 opacity-0" /><div className="flex items-center justify-between gap-4"><div className="display text-3xl font-semibold">{sector.name}</div><LanguageSwitcher className="text-white" /></div>
         <div className="num text-4xl">{clock(new Date(now))}</div>
       </header>
       <main className="flex flex-1 flex-col gap-8 p-8 sm:p-12">

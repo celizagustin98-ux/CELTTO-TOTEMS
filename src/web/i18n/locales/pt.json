@@ -1,0 +1,93 @@
+{
+  "app": {
+    "name": "CELTTO-TOTEMS",
+    "loading": "Carregando…",
+    "retry": "Tentar de novo",
+    "save": "Salvar",
+    "cancel": "Cancelar",
+    "delete": "Excluir",
+    "edit": "Editar",
+    "create": "Criar",
+    "search": "Buscar",
+    "back": "Voltar",
+    "error": "Ocorreu um erro",
+    "offline": "Sem conexão com o servidor",
+    "language": "Idioma"
+  },
+  "login": {
+    "title": "Entrar",
+    "subtitle": "Painel de atendimento e administração",
+    "username": "Usuário",
+    "password": "Senha",
+    "submit": "Entrar",
+    "invalid": "Usuário ou senha incorretos"
+  },
+  "nav": {
+    "overview": "Resumo",
+    "sectors": "Setores e botões",
+    "priorities": "Prioridades",
+    "desks": "Guichês",
+    "stations": "Totens e TVs",
+    "users": "Usuários",
+    "settings": "Configuração",
+    "reports": "Estatísticas",
+    "openTotem": "Abrir totem",
+    "openTv": "Abrir tela da sala",
+    "logout": "Sair",
+    "master": "Painel mestre"
+  },
+  "desk": {
+    "title": "Atendimento",
+    "waiting": "Em espera",
+    "callNext": "Chamar próximo",
+    "recall": "Rechamar",
+    "start": "Iniciar atendimento",
+    "finish": "Finalizar",
+    "absent": "Ausente",
+    "noTickets": "Não há senhas em espera",
+    "current": "Senha atual"
+  },
+  "totem": {
+    "chooseSector": "Escolha o seu setor",
+    "welcome": "Bem-vindo",
+    "takeTicket": "Toque em uma opção para tirar sua senha",
+    "yourTicket": "Sua senha",
+    "wait": "Aguarde ser chamado",
+    "ahead": "pessoas na sua frente",
+    "print": "Imprimindo…",
+    "pinTitle": "Configurar totem",
+    "pin": "PIN",
+    "confirm": "Confirmar",
+    "offline": "Sem conexão. Tentando de novo…",
+    "errorIssue": "Não foi possível emitir a senha"
+  },
+  "tv": {
+    "nowCalling": "Chamando",
+    "recall": "Rechamada",
+    "waiting": "Em espera",
+    "history": "Últimas chamadas",
+    "enableSound": "Toque para ativar som e voz",
+    "soundOn": "Som ativo",
+    "soundOff": "Som desativado"
+  },
+  "ticket": {
+    "status": {
+      "waiting": "Em espera",
+      "called": "Chamado",
+      "serving": "Em atendimento",
+      "done": "Atendido",
+      "absent": "Ausente",
+      "cancelled": "Cancelado"
+    }
+  },
+  "voice": {
+    "template": "Senha {prefix} {number}, dirija-se a {place}"
+  },
+  "settings": {
+    "orgName": "Nome da organização",
+    "voice": "Voz na TV",
+    "chime": "Campainha",
+    "voiceTemplate": "Modelo de voz",
+    "language": "Idioma da interface"
+  }
+}

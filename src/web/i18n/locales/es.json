@@ -1,0 +1,93 @@
+{
+  "app": {
+    "name": "CELTTO-TOTEMS",
+    "loading": "Cargando…",
+    "retry": "Reintentar",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "delete": "Eliminar",
+    "edit": "Editar",
+    "create": "Crear",
+    "search": "Buscar",
+    "back": "Volver",
+    "error": "Ocurrió un error",
+    "offline": "Sin conexión con el servidor",
+    "language": "Idioma"
+  },
+  "login": {
+    "title": "Ingresar",
+    "subtitle": "Panel de atención y administración",
+    "username": "Usuario",
+    "password": "Contraseña",
+    "submit": "Entrar",
+    "invalid": "Usuario o contraseña incorrectos"
+  },
+  "nav": {
+    "overview": "Resumen",
+    "sectors": "Secretarías y botones",
+    "priorities": "Prioridades",
+    "desks": "Escritorios",
+    "stations": "Tótems y TVs",
+    "users": "Usuarios",
+    "settings": "Configuración",
+    "reports": "Estadísticas",
+    "openTotem": "Abrir tótem",
+    "openTv": "Abrir pantalla de sala",
+    "logout": "Cerrar sesión",
+    "master": "Panel maestro"
+  },
+  "desk": {
+    "title": "Atención",
+    "waiting": "En espera",
+    "callNext": "Llamar siguiente",
+    "recall": "Rellamar",
+    "start": "Iniciar atención",
+    "finish": "Finalizar",
+    "absent": "Ausente",
+    "noTickets": "No hay turnos en espera",
+    "current": "Turno actual"
+  },
+  "totem": {
+    "chooseSector": "Elegí tu secretaría",
+    "welcome": "Bienvenido",
+    "takeTicket": "Tocá una opción para sacar tu turno",
+    "yourTicket": "Tu turno",
+    "wait": "Aguarde a ser llamado",
+    "ahead": "personas antes que vos",
+    "print": "Imprimiendo…",
+    "pinTitle": "Configurar tótem",
+    "pin": "PIN",
+    "confirm": "Confirmar",
+    "offline": "Sin conexión. Reintentando…",
+    "errorIssue": "No se pudo emitir el turno"
+  },
+  "tv": {
+    "nowCalling": "Llamando",
+    "recall": "Rellamado",
+    "waiting": "En espera",
+    "history": "Últimos llamados",
+    "enableSound": "Tocá para activar sonido y voz",
+    "soundOn": "Sonido activo",
+    "soundOff": "Sonido desactivado"
+  },
+  "ticket": {
+    "status": {
+      "waiting": "En espera",
+      "called": "Llamado",
+      "serving": "En atención",
+      "done": "Atendido",
+      "absent": "Ausente",
+      "cancelled": "Cancelado"
+    }
+  },
+  "voice": {
+    "template": "Turno {prefix} {number}, pasar a {place}"
+  },
+  "settings": {
+    "orgName": "Nombre de la organización",
+    "voice": "Voz en TV",
+    "chime": "Campanilla",
+    "voiceTemplate": "Plantilla de voz",
+    "language": "Idioma de la interfaz"
+  }
+}

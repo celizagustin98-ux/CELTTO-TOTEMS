@@ -1,0 +1,93 @@
+{
+  "app": {
+    "name": "CELTTO-TOTEMS",
+    "loading": "Loading…",
+    "retry": "Retry",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "search": "Search",
+    "back": "Back",
+    "error": "Something went wrong",
+    "offline": "No connection to the server",
+    "language": "Language"
+  },
+  "login": {
+    "title": "Sign in",
+    "subtitle": "Service desk and admin panel",
+    "username": "Username",
+    "password": "Password",
+    "submit": "Sign in",
+    "invalid": "Invalid username or password"
+  },
+  "nav": {
+    "overview": "Overview",
+    "sectors": "Sectors & buttons",
+    "priorities": "Priorities",
+    "desks": "Desks",
+    "stations": "Kiosks & TVs",
+    "users": "Users",
+    "settings": "Settings",
+    "reports": "Statistics",
+    "openTotem": "Open kiosk",
+    "openTv": "Open waiting-room display",
+    "logout": "Sign out",
+    "master": "Admin panel"
+  },
+  "desk": {
+    "title": "Service desk",
+    "waiting": "Waiting",
+    "callNext": "Call next",
+    "recall": "Recall",
+    "start": "Start serving",
+    "finish": "Finish",
+    "absent": "No-show",
+    "noTickets": "No tickets waiting",
+    "current": "Current ticket"
+  },
+  "totem": {
+    "chooseSector": "Choose your sector",
+    "welcome": "Welcome",
+    "takeTicket": "Tap an option to get your ticket",
+    "yourTicket": "Your ticket",
+    "wait": "Please wait to be called",
+    "ahead": "people ahead of you",
+    "print": "Printing…",
+    "pinTitle": "Configure kiosk",
+    "pin": "PIN",
+    "confirm": "Confirm",
+    "offline": "Offline. Retrying…",
+    "errorIssue": "Could not issue ticket"
+  },
+  "tv": {
+    "nowCalling": "Now calling",
+    "recall": "Recall",
+    "waiting": "Waiting",
+    "history": "Recent calls",
+    "enableSound": "Tap to enable sound and voice",
+    "soundOn": "Sound on",
+    "soundOff": "Sound off"
+  },
+  "ticket": {
+    "status": {
+      "waiting": "Waiting",
+      "called": "Called",
+      "serving": "Serving",
+      "done": "Done",
+      "absent": "No-show",
+      "cancelled": "Cancelled"
+    }
+  },
+  "voice": {
+    "template": "Ticket {prefix} {number}, please go to {place}"
+  },
+  "settings": {
+    "orgName": "Organization name",
+    "voice": "TV voice",
+    "chime": "Chime",
+    "voiceTemplate": "Voice template",
+    "language": "Interface language"
+  }
+}

@@ -1,0 +1,93 @@
+{
+  "app": {
+    "name": "CELTTO-TOTEMS",
+    "loading": "Caricamento…",
+    "retry": "Riprova",
+    "save": "Salva",
+    "cancel": "Annulla",
+    "delete": "Elimina",
+    "edit": "Modifica",
+    "create": "Crea",
+    "search": "Cerca",
+    "back": "Indietro",
+    "error": "Si è verificato un errore",
+    "offline": "Nessuna connessione al server",
+    "language": "Lingua"
+  },
+  "login": {
+    "title": "Accedi",
+    "subtitle": "Pannello di sportello e amministrazione",
+    "username": "Utente",
+    "password": "Password",
+    "submit": "Entra",
+    "invalid": "Utente o password non validi"
+  },
+  "nav": {
+    "overview": "Riepilogo",
+    "sectors": "Settori e pulsanti",
+    "priorities": "Priorità",
+    "desks": "Sportelli",
+    "stations": "Totem e TV",
+    "users": "Utenti",
+    "settings": "Impostazioni",
+    "reports": "Statistiche",
+    "openTotem": "Apri totem",
+    "openTv": "Apri display sala",
+    "logout": "Esci",
+    "master": "Pannello master"
+  },
+  "desk": {
+    "title": "Sportello",
+    "waiting": "In attesa",
+    "callNext": "Chiama successivo",
+    "recall": "Richiama",
+    "start": "Inizia servizio",
+    "finish": "Termina",
+    "absent": "Assente",
+    "noTickets": "Nessun ticket in attesa",
+    "current": "Ticket attuale"
+  },
+  "totem": {
+    "chooseSector": "Scegli il settore",
+    "welcome": "Benvenuto",
+    "takeTicket": "Tocca un'opzione per prendere il ticket",
+    "yourTicket": "Il tuo ticket",
+    "wait": "Attendi di essere chiamato",
+    "ahead": "persone prima di te",
+    "print": "Stampa…",
+    "pinTitle": "Configura totem",
+    "pin": "PIN",
+    "confirm": "Conferma",
+    "offline": "Offline. Nuovo tentativo…",
+    "errorIssue": "Impossibile emettere il ticket"
+  },
+  "tv": {
+    "nowCalling": "Chiamata",
+    "recall": "Richiama",
+    "waiting": "In attesa",
+    "history": "Ultime chiamate",
+    "enableSound": "Tocca per attivare suono e voce",
+    "soundOn": "Suono attivo",
+    "soundOff": "Suono disattivato"
+  },
+  "ticket": {
+    "status": {
+      "waiting": "In attesa",
+      "called": "Chiamato",
+      "serving": "In servizio",
+      "done": "Completato",
+      "absent": "Assente",
+      "cancelled": "Annullato"
+    }
+  },
+  "voice": {
+    "template": "Ticket {prefix} {number}, rivolgersi a {place}"
+  },
+  "settings": {
+    "orgName": "Nome organizzazione",
+    "voice": "Voce TV",
+    "chime": "Campanella",
+    "voiceTemplate": "Modello voce",
+    "language": "Lingua interfaccia"
+  }
+}
