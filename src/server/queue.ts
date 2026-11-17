@@ -37,7 +37,28 @@ export async function createTicket(ctx: Ctx, buttonId: number) {
     .where((eb) => eb.or([eb('priority', '>', priorityWeight), eb.and([eb('priority', '=', priorityWeight), eb('created_at', '<=', now)])]))
     .executeTakeFirstOrThrow()
   ctx.hub.broadcast({ type: 'queue', sectorIds: [sector.id] })
-  return { id: t.id, code: t.code, label: btn.label, sectorName: sector.name, color: btn.color ?? sector.color, waitingAhead: Number(ahead.n), createdAt: now }
+  const settings = await getSettings(ctx)
+  let estimatedWaitMin: number | null = null
+  if (settings.wait_estimate_enabled) {
+    const served = await ctx.db.selectFrom('tickets').select(['created_at', 'called_at', 'started_at', 'finished_at'])
+      .where('sector_id', '=', sector.id).where('business_date', '=', date).where('status', 'in', ['done', 'absent'])
+      .orderBy('id', 'desc').limit(30).execute()
+    const waits = served.map((x) => mins(x.created_at, x.called_at ?? x.started_at)).filter((x): x is number => x != null && x >= 0)
+    const avgWait = waits.length ? waits.reduce((a, b) => a + b, 0) / waits.length : 5
+    estimatedWaitMin = Math.max(1, Math.round(avgWait * (Number(ahead.n) + 1)))
+  }
+  const token = t.code
+  return {
+    id: t.id,
+    code: t.code,
+    label: btn.label,
+    sectorName: sector.name,
+    color: btn.color ?? sector.color,
+    waitingAhead: Number(ahead.n),
+    estimatedWaitMin,
+    createdAt: now,
+    qrPath: settings.qr_ticket_enabled ? `/t/${encodeURIComponent(t.code)}` : null,
+  }
 }
 
 async function announce(ctx: Ctx, ticketId: number, recall: boolean) {
@@ -58,7 +79,7 @@ async function myCurrent(ctx: Ctx, u: AuthUser) {
 async function takeTicket(ctx: Ctx, u: AuthUser, pick: () => Promise<number | undefined>) {
   const sid = needSector(u)
   if (await myCurrent(ctx, u)) throw new HttpError(409, 'Ya tenés un turno en curso. Finalizalo o marcalo como ausente.')
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 8; i++) {
     const id = await pick()
     if (id === undefined) throw new HttpError(404, 'No hay turnos en espera')
     const now = nowIso()

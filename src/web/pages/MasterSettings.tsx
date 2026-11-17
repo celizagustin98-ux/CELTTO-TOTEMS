@@ -78,7 +78,27 @@ export default function SettingsPage() {
         <p className="text-xs text-muted">En la pantalla filtrada, los números después de “sectors=” son los de cada secretaría separados por coma.</p>
       </Section>
 
+      <Section title="Pantalla TV — multimedia" hint="Videos o imágenes (URL http/https) que rotan mientras no hay un llamado fuerte. Una URL por línea.">
+        <Toggle checked={!!s.tv_media_enabled} onChange={(v) => set('tv_media_enabled', v)} label="Mostrar multimedia en la TV" />
+        <Field label="URLs de video o imagen">
+          <textarea className={inputCls} rows={3} value={s.tv_media_urls || ''} onChange={(e) => set('tv_media_urls', e.target.value)} placeholder="https://ejemplo.com/aviso.mp4" />
+        </Field>
+        <Field label="Segundos entre avisos">
+          <input type="number" min={5} max={300} className={inputCls} value={s.tv_media_interval_sec || 20} onChange={(e) => set('tv_media_interval_sec', Number(e.target.value))} />
+        </Field>
+      </Section>
+
+      <Section title="Opciones de ticket y tótem" hint="Funciones opcionales que se activan solo si las necesitás.">
+        <Toggle checked={!!s.wait_estimate_enabled} onChange={(v) => set('wait_estimate_enabled', v)} label="Mostrar espera estimada" hint="En el ticket y en la pantalla del código QR." />
+        <Toggle checked={!!s.qr_ticket_enabled} onChange={(v) => set('qr_ticket_enabled', v)} label="Activar guía por QR del ticket" hint="Al sacar turno se ofrece el enlace /t/CODIGO para ver cola y a dónde ir cuando lo llamen." />
+        <Toggle checked={!!s.totem_dni_enabled} onChange={(v) => set('totem_dni_enabled', v)} label="Pedir DNI en el tótem (opcional)" hint="Campo de documento antes de emitir. No valida padrón; queda registrado en el evento si se informa." />
+        <Field label="Alerta si la cola supera N en espera">
+          <input type="number" min={5} max={500} className={inputCls} value={s.alert_queue_waiting || 25} onChange={(e) => set('alert_queue_waiting', Number(e.target.value))} />
+        </Field>
+      </Section>
+
       <Section title="Mi cuenta">
+
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Contraseña actual"><input type="password" className={inputCls} value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} autoComplete="current-password" /></Field>
           <Field label="Contraseña nueva" hint="Mínimo 8 caracteres."><input type="password" className={inputCls} value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} autoComplete="new-password" /></Field>

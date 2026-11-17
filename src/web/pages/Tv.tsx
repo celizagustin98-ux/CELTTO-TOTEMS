@@ -18,7 +18,7 @@ interface TvState {
     | 'tv_voice_template'
     | 'tv_voice_rate'
     | 'tv_chime_volume'
-    | 'tv_history_size'
+    | 'tv_history_size' | 'tv_media_enabled' | 'tv_media_urls' | 'tv_media_interval_sec'
   >
   recent: (Omit<CallTicket, 'at'> & { at: string })[]
   waiting: { sectorId: number; name: string; color: string; count: number }[]
@@ -161,6 +161,11 @@ export default function Tv() {
         <div className="mt-3">
           <LanguageSwitcher className="text-white/80" />
         </div>
+        {st?.settings.tv_media_enabled && (st.settings.tv_media_urls || '').trim() && (
+          <div className="mt-4 overflow-hidden rounded-xl bg-black/40 aspect-video">
+            <TvMedia urls={st.settings.tv_media_urls} intervalSec={st.settings.tv_media_interval_sec || 20} />
+          </div>
+        )}
         <h2 className="display mb-3 mt-6 text-lg font-semibold text-white/70">{t('tv.history')}</h2>
         <ul className="flex-1 space-y-2.5 overflow-hidden">
           {history.length === 0 && <li className="text-white/50">{t('tv.waiting')}</li>}
@@ -217,4 +222,20 @@ export default function Tv() {
       )}
     </div>
   )
+}
+
+
+function TvMedia({ urls, intervalSec }: { urls: string; intervalSec: number }) {
+  const list = urls.split(/[\n,]+/).map((u) => u.trim()).filter((u) => /^https?:\/\//i.test(u))
+  const [i, setI] = useState(0)
+  useEffect(() => {
+    if (list.length <= 1) return
+    const t = setInterval(() => setI((x) => (x + 1) % list.length), intervalSec * 1000)
+    return () => clearInterval(t)
+  }, [urls, intervalSec, list.length])
+  const src = list[i] || list[0]
+  if (!src) return null
+  const isVideo = /\.(mp4|webm|ogg)(\?|$)/i.test(src)
+  if (isVideo) return <video key={src} src={src} className="h-full w-full object-cover" autoPlay muted loop playsInline />
+  return <img key={src} src={src} alt="" className="h-full w-full object-cover" />
 }

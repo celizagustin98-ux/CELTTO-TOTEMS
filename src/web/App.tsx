@@ -6,6 +6,7 @@ import Master from './pages/Master'
 import Desk from './pages/Desk'
 import Totem from './pages/Totem'
 import Tv from './pages/Tv'
+import TicketStatus from './pages/TicketStatus'
 
 function Home() {
   const { user, loading } = useAuth()

@@ -10,7 +10,7 @@ import { Button, inputCls } from '../ui'
 interface PubBtn { id: number; label: string; subtitle: string | null; color: string }
 interface PubSector { id: number; name: string; color: string; welcomeMessage: string | null; buttons: PubBtn[] }
 type PubSettings = Omit<Settings, 'totem_pin'>
-interface Issued { code: string; label: string; sectorName: string; color: string; waitingAhead: number; createdAt: string }
+interface Issued { code: string; label: string; sectorName: string; color: string; waitingAhead: number; estimatedWaitMin?: number | null; qrPath?: string | null; createdAt: string }
 const KEY = 'celtto.totem.sector'
 const DEVICE_KEY = 'celtto.totem.device'
 function getDeviceKey() {
@@ -32,6 +32,7 @@ export default function Totem() {
   const [busy, setBusy] = useState(false)
   const [fail, setFail] = useState('')
   const [pinOpen, setPinOpen] = useState(false)
+  const [dni, setDni] = useState('')
   const taps = useRef<number[]>([])
 
   const load = useCallback(() => api<{ sectors: PubSector[]; settings: PubSettings }>('/api/public/sectors').then((d) => { setData(d); setError('') }).catch((e) => setError(e.message)), [])
@@ -47,7 +48,7 @@ export default function Totem() {
     if (busy) return
     setBusy(true); setFail('')
     try {
-      const t = await api<Issued>('/api/public/tickets', { body: { buttonId: b.id, deviceKey: getDeviceKey() } })
+      const t = await api<Issued>('/api/public/tickets', { body: { buttonId: b.id, deviceKey: getDeviceKey(), dni: data?.settings && (data.settings as any).totem_dni_enabled ? dni || undefined : undefined } })
       setIssued(t)
       if (data?.settings.totem_auto_print) setTimeout(() => window.print(), 250)
     } catch (e) { setFail((e as Error).message); setTimeout(() => setFail(''), 6000); void load() } finally { setBusy(false) }
@@ -85,7 +86,13 @@ export default function Totem() {
         {sector.buttons.length === 0 ? <p className="text-xl text-muted">Esta secretaría todavía no tiene botones configurados.</p> : (
           <div className={`grid flex-1 auto-rows-fr gap-6 ${cols}`}>
             {sector.buttons.map((b) => (
-              <button key={b.id} onClick={() => issue(b)} disabled={busy} className="flex min-h-48 flex-col justify-end rounded-3xl p-8 text-left shadow-lg transition-transform active:scale-[0.98] disabled:opacity-60" style={{ background: b.color, color: textOn(b.color) }}>
+              {(data.settings as any).totem_dni_enabled && (
+                <div className="col-span-full mb-2">
+                  <label className="mb-2 block text-lg text-white/80">Documento (opcional)</label>
+                  <input className={inputCls + " text-xl py-4"} inputMode="numeric" value={dni} onChange={(e) => setDni(e.target.value)} placeholder="DNI" />
+                </div>
+              )}
+              <button key={b.id} onClick={() => issue(b)} disabled={busy} className="flex min-h-56 sm:min-h-64 flex-col justify-end rounded-3xl p-8 text-left shadow-lg transition-transform active:scale-[0.98] disabled:opacity-60" style={{ background: b.color, color: textOn(b.color) }}>
                 <span className="display text-6xl font-semibold leading-tight">{b.label}</span>
                 {b.subtitle && <span className="mt-2 text-2xl opacity-85">{b.subtitle}</span>}
               </button>
@@ -105,6 +112,9 @@ export default function Totem() {
             </div>
             <div className="space-y-2 px-8 py-6">
               <p className="display text-3xl font-semibold">{issued.waitingAhead === 0 ? 'Sos el siguiente' : issued.waitingAhead === 1 ? 'Hay 1 persona antes que vos' : `Hay ${issued.waitingAhead} personas antes que vos`}</p>
+              {issued.estimatedWaitMin != null && <p className="mt-2 text-xl opacity-90">Espera estimada: ~{issued.estimatedWaitMin} min</p>}
+              {issued.qrPath && <p className="mt-3 text-sm opacity-80">Seguí tu turno: {location.origin}{issued.qrPath}</p>}
+              <button type="button" className="mt-4 rounded-xl bg-black/20 px-4 py-3 text-lg font-semibold" onClick={() => window.print()}>Reimprimir ticket</button>
               <p className="text-xl text-muted">{data.settings.ticket_footer}</p>
               <Button size="lg" className="mt-3 px-12" onClick={() => setIssued(null)}>Listo</Button>
             </div>

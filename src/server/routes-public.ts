@@ -136,6 +136,7 @@ export function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     const body = z.object({
       buttonId: z.number().int().positive(),
       deviceKey: z.string().min(4).max(64).optional(),
+      dni: z.string().trim().max(20).optional(),
     }).parse(req.body)
     const ipKey = `ip:${req.ip}`
     if (!ticketLimiter.hit(ipKey, ctx.cfg.ticketRatePerMinute, 60_000)) {
@@ -277,3 +278,95 @@ export function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     return tvState(ctx, ids)
   })
 }
+
+  app.get('/api/public/ticket/:code', async (req) => {
+    const code = z.string().min(1).max(12).parse((req.params as any).code).toUpperCase()
+    const date = (await import('./db.js')).businessDate(ctx.cfg.timezone)
+    const t = await ctx.db
+      .selectFrom('tickets')
+      .innerJoin('sectors', 'sectors.id', 'tickets.sector_id')
+      .leftJoin('buttons', 'buttons.id', 'tickets.button_id')
+      .select([
+        'tickets.id',
+        'tickets.code',
+        'tickets.status',
+        'tickets.created_at',
+        'tickets.called_at',
+        'tickets.desk',
+        'tickets.sector_id',
+        'sectors.name as sector_name',
+        'sectors.color as sector_color',
+        'buttons.label as button_label',
+      ])
+      .where('tickets.code', '=', code)
+      .where('tickets.business_date', '=', date)
+      .executeTakeFirst()
+    if (!t) throw new HttpError(404, 'Turno no encontrado para hoy')
+    const ahead = await ctx.db
+      .selectFrom('tickets')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('sector_id', '=', t.sector_id)
+      .where('business_date', '=', date)
+      .where('status', '=', 'waiting')
+      .where('id', '<', t.id)
+      .executeTakeFirst()
+    const settings = await getSettings(ctx)
+    let estimatedWaitMin: number | null = null
+    if (settings.wait_estimate_enabled && t.status === 'waiting') {
+      estimatedWaitMin = Math.max(1, Number(ahead?.n ?? 0) * 3)
+    }
+    return {
+      code: t.code,
+      status: t.status,
+      sectorName: t.sector_name,
+      sectorColor: t.sector_color,
+      desk: t.desk,
+      buttonLabel: t.button_label,
+      waitingAhead: Number(ahead?.n ?? 0),
+      estimatedWaitMin,
+      calledAt: t.called_at,
+      createdAt: t.created_at,
+      place: t.desk ? `${t.sector_name}, ${t.desk}` : t.sector_name,
+      message:
+        t.status === 'called' || t.status === 'serving'
+          ? `Dirigite a ${t.desk ? `${t.sector_name} · ${t.desk}` : t.sector_name}`
+          : t.status === 'waiting'
+            ? 'Aguarde su llamado'
+            : 'Este turno ya finalizó',
+    }
+  })
+
+  app.get('/api/public/ops-alerts', async () => {
+    const settings = await getSettings(ctx)
+    const date = (await import('./db.js')).businessDate(ctx.cfg.timezone)
+    const rows = await ctx.db
+      .selectFrom('tickets')
+      .innerJoin('sectors', 'sectors.id', 'tickets.sector_id')
+      .select(['sectors.id', 'sectors.name', 'sectors.color'])
+      .select((eb) => eb.fn.countAll<number>().as('waiting'))
+      .where('tickets.business_date', '=', date)
+      .where('tickets.status', 'in', ['waiting', 'called', 'serving'])
+      .groupBy(['sectors.id', 'sectors.name', 'sectors.color'])
+      .execute()
+    const alerts = []
+    for (const r of rows) {
+      const w = Number(r.waiting)
+      if (w >= settings.alert_queue_waiting) {
+        alerts.push({ type: 'queue_high', sectorId: r.id, sectorName: r.name, waiting: w, threshold: settings.alert_queue_waiting })
+      }
+    }
+    const staleStations = await ctx.db
+      .selectFrom('stations')
+      .selectAll()
+      .where('active', '=', 1)
+      .execute()
+    const now = Date.now()
+    for (const s of staleStations) {
+      if (!s.last_seen_at) continue
+      const age = now - Date.parse(s.last_seen_at)
+      if (age > 15 * 60_000) {
+        alerts.push({ type: 'station_stale', stationId: s.id, name: s.name, kind: s.kind, lastSeenAt: s.last_seen_at })
+      }
+    }
+    return { alerts, at: new Date().toISOString() }
+  })
