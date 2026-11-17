@@ -14,6 +14,9 @@ export interface Config {
     user: string
     password: string
     ssl: boolean
+    poolMax: number
+    poolMin: number
+    idleTimeoutMs: number
   }
   mssql: {
     server: string
@@ -33,6 +36,9 @@ export interface Config {
   autoMigrate: boolean
   logger: boolean
   redisUrl?: string
+  instanceId: string
+  ticketRatePerMinute: number
+  ticketRatePerDevice: number
 }
 
 const bool = (v: string | undefined, d: boolean) =>
@@ -53,6 +59,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       user: env.POSTGRES_USER ?? env.PGUSER ?? 'celtto',
       password: env.POSTGRES_PASSWORD ?? env.PGPASSWORD ?? '',
       ssl: bool(env.POSTGRES_SSL, false),
+      poolMax: Number(env.PG_POOL_MAX ?? 20),
+      poolMin: Number(env.PG_POOL_MIN ?? 2),
+      idleTimeoutMs: Number(env.PG_IDLE_TIMEOUT_MS ?? 30_000),
     },
     mssql: {
       server: env.MSSQL_SERVER ?? 'localhost',
@@ -72,5 +81,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     autoMigrate: bool(env.AUTO_MIGRATE, client !== 'mssql'),
     logger: bool(env.LOG_HTTP, true),
     redisUrl: env.REDIS_URL || undefined,
+    instanceId: env.INSTANCE_ID || `app-${process.pid}`,
+    ticketRatePerMinute: Number(env.TICKET_RATE_PER_MIN ?? 120),
+    ticketRatePerDevice: Number(env.TICKET_RATE_PER_DEVICE ?? 30),
   }
 }

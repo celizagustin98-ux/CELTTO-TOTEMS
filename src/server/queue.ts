@@ -1,5 +1,5 @@
 import type { Ctx } from './db.js'
-import { businessDate, insertId, nowIso } from './db.js'
+import { businessDate, insertId, nextCounterValue, nowIso } from './db.js'
 import { HttpError } from './errors.js'
 import { getSettings } from './settings.js'
 import type { AuthUser } from './types.js'
@@ -7,16 +7,6 @@ import type { AuthUser } from './types.js'
 const today = (ctx: Ctx) => businessDate(ctx.cfg.timezone)
 const mins = (a?: string | null, b?: string | null) => (a && b ? (Date.parse(b) - Date.parse(a)) / 60000 : null)
 const avg = (xs: (number | null)[]) => { const v = xs.filter((x): x is number => x !== null && x >= 0); return v.length ? Math.round((v.reduce((s, x) => s + x, 0) / v.length) * 10) / 10 : null }
-
-async function nextNumber(trx: any, key: string): Promise<number> {
-  for (let i = 0; i < 3; i++) {
-    const r = await trx.updateTable('counters').set((eb: any) => ({ counter_value: eb('counter_value', '+', 1) })).where('counter_key', '=', key).executeTakeFirst()
-    if (Number(r.numUpdatedRows) > 0) break
-    try { await trx.insertInto('counters').values({ counter_key: key, counter_value: 0 }).execute() } catch {  }
-  }
-  const row = await trx.selectFrom('counters').select('counter_value').where('counter_key', '=', key).executeTakeFirstOrThrow()
-  return Number(row.counter_value)
-}
 
 export async function createTicket(ctx: Ctx, buttonId: number) {
   const btn = await ctx.db.selectFrom('buttons').selectAll().where('id', '=', buttonId).where('active', '=', 1).executeTakeFirst()
@@ -32,7 +22,7 @@ export async function createTicket(ctx: Ctx, buttonId: number) {
   const date = today(ctx)
   const now = nowIso()
   const t = await ctx.db.transaction().execute(async (trx) => {
-    const n = await nextNumber(trx, `${date}|${btn.prefix}`)
+    const n = await nextCounterValue(ctx, trx, `${date}|${btn.prefix}`)
     const code = `${btn.prefix}-${String(n).padStart(3, '0')}`
     const id = await insertId(ctx, trx, 'tickets', {
       code, prefix: btn.prefix, number: n, business_date: date, button_id: btn.id, sector_id: sector.id, origin_sector_id: btn.sector_id,

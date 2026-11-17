@@ -12,6 +12,15 @@ interface PubSector { id: number; name: string; color: string; welcomeMessage: s
 type PubSettings = Omit<Settings, 'totem_pin'>
 interface Issued { code: string; label: string; sectorName: string; color: string; waitingAhead: number; createdAt: string }
 const KEY = 'celtto.totem.sector'
+const DEVICE_KEY = 'celtto.totem.device'
+function getDeviceKey() {
+  let k = localStorage.getItem(DEVICE_KEY)
+  if (!k) {
+    k = `totem_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
+    localStorage.setItem(DEVICE_KEY, k)
+  }
+  return k
+}
 
 export default function Totem() {
   const { t } = useTranslation()
@@ -38,7 +47,7 @@ export default function Totem() {
     if (busy) return
     setBusy(true); setFail('')
     try {
-      const t = await api<Issued>('/api/public/tickets', { body: { buttonId: b.id } })
+      const t = await api<Issued>('/api/public/tickets', { body: { buttonId: b.id, deviceKey: getDeviceKey() } })
       setIssued(t)
       if (data?.settings.totem_auto_print) setTimeout(() => window.print(), 250)
     } catch (e) { setFail((e as Error).message); setTimeout(() => setFail(''), 6000); void load() } finally { setBusy(false) }

@@ -16,17 +16,24 @@ export function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/health', async () => {
     const t0 = Date.now()
     let dbOk = false
+    let dbError: string | undefined
     try {
       await ctx.db.selectFrom('settings').select('setting_key').limit(1).execute()
       dbOk = true
-    } catch {}
+    } catch (e) {
+      dbError = (e as Error).message
+    }
+    const hubMode = (ctx.hub as any).mode ?? 'memory'
     return {
       ok: dbOk,
       db: ctx.client,
       dbLatencyMs: Date.now() - t0,
+      dbError,
+      hub: hubMode,
+      instanceId: ctx.cfg.instanceId,
       wsClients: ctx.hub.size,
       uptimeSec: Math.round(process.uptime()),
-      version: '1.1.0',
+      version: '1.2.0',
     }
   })
 
@@ -126,9 +133,21 @@ export function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   })
 
   app.post('/api/public/tickets', async (req) => {
-    if (!ticketLimiter.hit(req.ip, 40, 60_000)) throw new HttpError(429, 'Demasiados turnos en poco tiempo')
-    const { buttonId } = z.object({ buttonId: z.number().int().positive() }).parse(req.body)
-    return createTicket(ctx, buttonId)
+    const body = z.object({
+      buttonId: z.number().int().positive(),
+      deviceKey: z.string().min(4).max(64).optional(),
+    }).parse(req.body)
+    const ipKey = `ip:${req.ip}`
+    if (!ticketLimiter.hit(ipKey, ctx.cfg.ticketRatePerMinute, 60_000)) {
+      throw new HttpError(429, 'Demasiados turnos desde esta red. Esperá un momento.')
+    }
+    if (body.deviceKey) {
+      const devKey = `dev:${body.deviceKey}`
+      if (!ticketLimiter.hit(devKey, ctx.cfg.ticketRatePerDevice, 60_000)) {
+        throw new HttpError(429, 'Este tótem emitió demasiados turnos. Esperá un momento.')
+      }
+    }
+    return createTicket(ctx, body.buttonId)
   })
 
   app.post('/api/public/tickets/:id/reprint', async (req) => {

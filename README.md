@@ -114,3 +114,15 @@ La aplicación **sigue en Linux**. Solo cambia el destino de la base:
 - Una secretaria solo accede a la cola de su secretaría (validado en el servidor).
 - El panel maestro solo admite rol dueño (creado por CLI).
 - Fuera de la red interna: HTTPS + `COOKIE_SECURE=true`.
+
+
+## Escalado (10 tótems, TVs, secretarias)
+
+Ver `deploy/linux/SCALE.md`.
+
+```bash
+docker compose up -d --build
+docker compose up -d --scale app=2
+```
+
+Incluye PostgreSQL afinado, Redis (tiempo real entre instancias), proxy Caddy y límites por tótem/IP.

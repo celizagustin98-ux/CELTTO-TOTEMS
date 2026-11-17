@@ -1,3 +1,12 @@
+# CELTTO-TOTEMS — producción escalable
+# 10 tótems, varias TVs, varias secretarias por sector, alto volumen de tickets
+#
+# Arranque:
+#   docker compose up -d --build
+# Escalar API:
+#   docker compose up -d --scale app=2
+# (con varias apps, el puerto 8080 del host solo mapea una; usar el servicio proxy)
+
 services:
   db:
     image: postgres:16-alpine
@@ -6,22 +15,37 @@ services:
       POSTGRES_DB: celtto_totems
       POSTGRES_USER: celtto
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cambiar-esta-clave}
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=768MB
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=128MB
     volumes:
       - celtto_pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U celtto -d celtto_totems"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 12
     networks: [celtto]
-    # 5432 no expuesto al host por defecto (hardening)
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     networks: [celtto]
-    profiles: ["scale"]
 
   app:
     build: .
@@ -31,6 +55,8 @@ services:
       - /tmp
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     environment:
       PORT: 8080
@@ -43,15 +69,31 @@ services:
       POSTGRES_USER: celtto
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cambiar-esta-clave}
       POSTGRES_SSL: "false"
+      PG_POOL_MAX: ${PG_POOL_MAX:-20}
+      PG_POOL_MIN: ${PG_POOL_MIN:-2}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       SESSION_HOURS: ${SESSION_HOURS:-12}
       AUTO_MIGRATE: ${AUTO_MIGRATE:-true}
       LOG_HTTP: ${LOG_HTTP:-true}
-      REDIS_URL: ${REDIS_URL:-}
-    ports:
-      - "8080:8080"
+      REDIS_URL: redis://redis:6379
+      TICKET_RATE_PER_MIN: ${TICKET_RATE_PER_MIN:-120}
+      TICKET_RATE_PER_DEVICE: ${TICKET_RATE_PER_DEVICE:-30}
+      INSTANCE_ID: ${INSTANCE_ID:-}
+    expose:
+      - "8080"
     security_opt:
       - no-new-privileges:true
+    networks: [celtto]
+
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "8080:80"
+    volumes:
+      - ./deploy/linux/Caddyfile:/etc/caddy/Caddyfile:ro
     networks: [celtto]
 
 networks:

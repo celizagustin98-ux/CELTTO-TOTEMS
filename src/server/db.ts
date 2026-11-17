@@ -1,15 +1,15 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { Kysely, MssqlDialect, PostgresDialect, SqliteDialect } from 'kysely'
+import { Kysely, MssqlDialect, PostgresDialect, SqliteDialect, sql } from 'kysely'
 import type { Config, DbClient } from './config.js'
-import type { Hub } from './hub.js'
+import type { Broadcaster } from './hub.js'
 import type { Database } from './types.js'
 
 export interface Ctx {
   db: Kysely<Database>
   client: DbClient
   cfg: Config
-  hub: Hub
+  hub: Broadcaster
 }
 
 export async function createDb(cfg: Config): Promise<{ db: Kysely<Database>; client: DbClient }> {
@@ -31,12 +31,18 @@ export async function createDb(cfg: Config): Promise<{ db: Kysely<Database>; cli
       user: cfg.postgres.user,
       password: cfg.postgres.password,
       ssl: cfg.postgres.ssl ? { rejectUnauthorized: false } : undefined,
-      max: 10,
+      max: cfg.postgres.poolMax,
+      min: cfg.postgres.poolMin,
+      idleTimeoutMillis: cfg.postgres.idleTimeoutMs,
+      connectionTimeoutMillis: 5_000,
+      allowExitOnIdle: false,
+    })
+    pool.on('error', (err) => {
+      console.error('Postgres pool error', err.message)
     })
     return { db: new Kysely<Database>({ dialect: new PostgresDialect({ pool }) }), client: 'postgres' }
   }
 
-  
   const Tedious = await import('tedious')
   const Tarn = await import('tarn')
   const T = (Tedious as any).default ?? Tedious
@@ -73,6 +79,43 @@ export async function insertId(
       ? await (ins as any).output('inserted.id').executeTakeFirstOrThrow()
       : await (ins as any).returning('id').executeTakeFirstOrThrow()
   return Number(row.id)
+}
+
+/** Numeración atómica por clave (fecha|prefijo). En Postgres usa UPSERT. */
+export async function nextCounterValue(ctx: Ctx, trx: Kysely<any>, key: string): Promise<number> {
+  if (ctx.client === 'postgres') {
+    const r = await sql<{ counter_value: number }>`
+      INSERT INTO counters (counter_key, counter_value)
+      VALUES (${key}, 1)
+      ON CONFLICT (counter_key)
+      DO UPDATE SET counter_value = counters.counter_value + 1
+      RETURNING counter_value
+    `.execute(trx)
+    return Number(r.rows[0]?.counter_value ?? 1)
+  }
+
+  for (let i = 0; i < 5; i++) {
+    const upd = await trx
+      .updateTable('counters')
+      .set((eb: any) => ({ counter_value: eb('counter_value', '+', 1) }))
+      .where('counter_key', '=', key)
+      .executeTakeFirst()
+    if (Number(upd.numUpdatedRows) > 0) {
+      const row = await trx
+        .selectFrom('counters')
+        .select('counter_value')
+        .where('counter_key', '=', key)
+        .executeTakeFirstOrThrow()
+      return Number(row.counter_value)
+    }
+    try {
+      await trx.insertInto('counters').values({ counter_key: key, counter_value: 1 }).execute()
+      return 1
+    } catch {
+      /* carrera: reintentar */
+    }
+  }
+  throw new Error('No se pudo asignar número de turno')
 }
 
 export const nowIso = () => new Date().toISOString()
