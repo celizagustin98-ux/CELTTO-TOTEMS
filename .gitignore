@@ -2,6 +2,16 @@ node_modules/
 dist/
 logs/
 data/*.db*
+data/*.db-journal
 .env
 .env.local
+.env.production
+.env.*.local
 *.log
+.DS_Store
+coverage/
+.vscode/
+.idea/
+*.pem
+*.key
+secrets/

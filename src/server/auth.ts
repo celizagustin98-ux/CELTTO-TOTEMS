@@ -67,8 +67,9 @@ export async function openSession(ctx: Ctx, reply: FastifyReply, userId: number)
   reply.setCookie('sid', token, {
     path: '/',
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: 'strict',
     secure: ctx.cfg.cookieSecure,
     maxAge: ctx.cfg.sessionHours * 3600,
+    signed: false,
   })
 }

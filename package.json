@@ -20,7 +20,9 @@
     "db:check": "tsx src/server/cli.ts db:check",
     "db:script": "tsx src/server/cli.ts db:script",
     "test": "tsx --test tests/*.test.ts",
-    "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.web.json --noEmit"
+    "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "migrate:prod": "node dist/server/cli.js migrate",
+    "owner:create:prod": "node dist/server/cli.js owner:create"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.5",

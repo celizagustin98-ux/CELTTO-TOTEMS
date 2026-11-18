@@ -126,3 +126,13 @@ docker compose up -d --scale app=2
 ```
 
 Incluye PostgreSQL afinado, Redis (tiempo real entre instancias), proxy Caddy y límites por tótem/IP.
+
+## Seguridad y despliegue sin código en el servidor
+
+Ver `deploy/linux/DEPLOY-SECURE.md`.
+
+- Imagen Docker multi-stage **sin** carpeta `src/`
+- Secretos solo por `.env` (no en git)
+- En producción: `SESSION_SECRET` + `POSTGRES_PASSWORD` fuertes obligatorios
+- Preferí `docker-compose.prod.yml` + imagen de registry (no `git clone` en Proxmox)
+
