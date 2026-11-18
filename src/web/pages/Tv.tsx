@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { BellOff, Volume2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -27,10 +28,13 @@ interface TvState {
 export default function Tv() {
   const { t } = useTranslation()
   const now = useNow(10000)
+  const { deviceKey: routeKey } = useParams()
   const params = new URLSearchParams(location.search)
   const filter = params.get('sectors') ?? ''
   const ids = filter.split(',').map(Number).filter((n) => n > 0)
-  const deviceKey = params.get('deviceKey') || localStorage.getItem('celtto.tv.device') || ''
+  const deviceKey = routeKey || params.get('deviceKey') || localStorage.getItem('celtto.tv.device') || ''
+  const [stationName, setStationName] = useState<string | null>(null)
+  const [stationErr, setStationErr] = useState('')
   const [st, setSt] = useState<TvState | null>(null)
   const [featured, setFeatured] = useState<{ t: Omit<CallTicket, 'at'>; recall: boolean } | null>(null)
   const [flash, setFlash] = useState(0)
@@ -50,6 +54,30 @@ export default function Tv() {
       /* offline: se reintenta */
     }
   }, [filter, deviceKey])
+
+  useEffect(() => {
+    if (!routeKey) return
+    let stop = false
+    const ping = async () => {
+      try {
+        const st = await api<{ kind: string; name: string; sectorId: number | null }>(`/api/public/stations/${encodeURIComponent(routeKey)}`)
+        if (stop) return
+        if (st.kind !== 'tv') {
+          setStationErr('Esta URL no es de una TV')
+          return
+        }
+        setStationName(st.name)
+        setStationErr('')
+        localStorage.setItem('celtto.tv.device', routeKey)
+      } catch (e: any) {
+        if (!stop) setStationErr(e.message || 'TV no configurada')
+      }
+    }
+    void ping()
+    const t = setInterval(ping, 120000)
+    return () => { stop = true; clearInterval(t) }
+  }, [routeKey])
+
 
   useEffect(() => {
     void load()

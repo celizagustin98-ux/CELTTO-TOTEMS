@@ -21,4 +21,16 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
-          <Route path="/master
+          <Route path="/master/*" element={<RequireRole roles={['owner', 'admin', 'tech']}><Master /></RequireRole>} />
+          <Route path="/desk" element={<RequireRole roles={['secretary', 'admin', 'owner']}><Desk /></RequireRole>} />
+          <Route path="/totem" element={<Totem />} />
+          <Route path="/totem/:deviceKey" element={<Totem />} />
+          <Route path="/tv" element={<Tv />} />
+          <Route path="/tv/:deviceKey" element={<Tv />} />
+          <Route path="/t/:code" element={<TicketStatus />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </ToastProvider>
+    </AuthProvider>
+  )
+}
