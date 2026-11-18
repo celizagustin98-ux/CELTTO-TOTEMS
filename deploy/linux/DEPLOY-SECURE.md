@@ -78,3 +78,19 @@ Solo:
 - `node_modules` de producción
 
 No incluye TypeScript fuente, tests ni `.env`.
+
+## Paquete de operación (opción A)
+
+El contenido listo para el servidor del cliente está en `deploy/package/`.
+
+```bash
+# generar zip
+bash deploy/linux/pack-ops.sh
+
+# en el servidor
+sudo mkdir -p /opt/celtto
+# copiar y descomprimir el zip
+cd /opt/celtto
+sudo bash scripts/instalar.sh
+sudo bash scripts/actualizar.sh   # cuando haya nueva versión
+```

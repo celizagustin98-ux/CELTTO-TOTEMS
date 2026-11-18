@@ -1,0 +1,102 @@
+# Producción: NO clona el repo. Solo usa imágenes y un archivo .env
+#
+# En el servidor:
+#   1) Copiá solo este archivo + .env (nunca el código fuente)
+#   2) docker compose -f docker-compose.prod.yml pull
+#   3) docker compose -f docker-compose.prod.yml up -d
+#
+# La imagen de app se construye en CI o en una máquina de build y se publica
+# en un registry (GHCR, Docker Hub, registry privado).
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DATABASE:-celtto_totems}
+      POSTGRES_USER: ${POSTGRES_USER:-celtto}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Definí POSTGRES_PASSWORD en .env}
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=256MB
+    volumes:
+      - celtto_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks: [celtto]
+    # Sin puertos publicados al host por defecto
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [celtto]
+
+  app:
+    image: ${CELTTO_IMAGE:?Definí CELTTO_IMAGE=ghcr.io/tu-org/celtto-totems:tag}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 8080
+      HOST: 0.0.0.0
+      APP_TIMEZONE: ${APP_TIMEZONE:-America/Argentina/Cordoba}
+      DB_CLIENT: postgres
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DATABASE: ${POSTGRES_DATABASE:-celtto_totems}
+      POSTGRES_USER: ${POSTGRES_USER:-celtto}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_SSL: "false"
+      PG_POOL_MAX: ${PG_POOL_MAX:-20}
+      REDIS_URL: redis://redis:6379
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      SESSION_HOURS: ${SESSION_HOURS:-12}
+      SESSION_SECRET: ${SESSION_SECRET:?Definí SESSION_SECRET (>=32 chars)}
+      AUTO_MIGRATE: ${AUTO_MIGRATE:-true}
+      LOG_HTTP: ${LOG_HTTP:-false}
+      TICKET_RATE_PER_MIN: ${TICKET_RATE_PER_MIN:-120}
+      TICKET_RATE_PER_DEVICE: ${TICKET_RATE_PER_DEVICE:-30}
+    expose:
+      - "8080"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks: [celtto]
+
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    networks: [celtto]
+
+networks:
+  celtto:
+    driver: bridge
+
+volumes:
+  celtto_pgdata:

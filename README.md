@@ -136,3 +136,13 @@ Ver `deploy/linux/DEPLOY-SECURE.md`.
 - En producción: `SESSION_SECRET` + `POSTGRES_PASSWORD` fuertes obligatorios
 - Preferí `docker-compose.prod.yml` + imagen de registry (no `git clone` en Proxmox)
 
+## Paquete para instalar en el servidor del cliente
+
+Ver `deploy/package/README.md`.
+
+```bash
+bash deploy/linux/pack-ops.sh
+# → dist-ops/celtto-ops-package.zip  (sin código fuente)
+# En el cliente: /opt/celtto + sudo bash scripts/instalar.sh
+```
+
