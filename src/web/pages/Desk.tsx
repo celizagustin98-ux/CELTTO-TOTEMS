@@ -44,7 +44,7 @@ export default function Desk() {
   const next = waiting[0]
 
   return (
-    <div className="flex min-h-full flex-col">
+    <div className="flex min-h-full flex-col fade-up">
       <header className="flex items-center gap-4 px-5 py-3.5 sm:px-8" style={{ background: sector.color, color: fg }}>
         <div className="min-w-0 flex-1">
           <div className="display truncate text-xl font-semibold">{sector.name}{st.user.desk ? ` · ${st.user.desk}` : ''}</div>

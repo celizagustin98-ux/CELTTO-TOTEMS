@@ -1,16 +1,9 @@
 import { useState, type FormEvent } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
-import { motion } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
 import { homeFor, useAuth } from '../auth'
 import { LanguageSwitcher } from '../components/LanguageSwitcher'
 import { Button, Field, inputCls } from '../ui'
-
-const STUBS = [
-  { code: 'A-014', c: '#2f6fed', r: -6 },
-  { code: 'C-003', c: '#e8590c', r: 3 },
-  { code: 'R-027', c: '#0e9f6e', r: -2 },
-]
 
 export default function Login() {
   const { t } = useTranslation()
@@ -36,38 +29,33 @@ export default function Login() {
   }
 
   return (
-    <div className="grid min-h-full lg:grid-cols-[1.1fr_1fr]">
-      <div className="relative hidden flex-col justify-between overflow-hidden bg-ink p-12 text-white lg:flex">
-        <div className="display text-2xl font-semibold tracking-tight">{t('app.name')}</div>
-        <div className="flex flex-col gap-5">
-          {STUBS.map((s, i) => (
-            <motion.div
-              key={s.code}
-              initial={{ opacity: 0, x: -40 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.15 * i, type: 'spring', stiffness: 120 }}
-              className="stub w-[22rem] px-8 py-6"
-              style={{ background: s.c, rotate: s.r }}
-            >
-              <div className="num text-7xl leading-none text-white">{s.code}</div>
-            </motion.div>
-          ))}
+    <div className="grid min-h-full lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+      <div className="relative hidden overflow-hidden bg-sidebar lg:flex lg:flex-col lg:justify-between lg:p-12">
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_20%_0%,#134e4a_0%,transparent_55%),radial-gradient(ellipse_at_90%_80%,#1e3a5f_0%,transparent_50%)] opacity-80" />
+        <div className="relative">
+          <div className="text-[13px] font-medium uppercase tracking-[0.14em] text-teal-300/90">CELTTO</div>
+          <div className="display mt-2 text-2xl font-semibold text-white">TOTEMS</div>
         </div>
-        <p className="display max-w-sm text-3xl font-medium leading-tight text-white/90">{t('login.subtitle')}</p>
+        <div className="relative max-w-md">
+          <p className="display text-[2rem] font-semibold leading-tight text-white">
+            Colas claras.
+            <br />
+            Atención ordenada.
+          </p>
+          <p className="mt-4 text-[15px] leading-relaxed text-slate-300">
+            Sistema de turnos para tótems, paneles de secretaría y pantallas de sala. Diseñado para operación diaria real.
+          </p>
+        </div>
+        <div className="relative text-[12px] text-slate-500">v0.0.1 · Linux · Docker · PostgreSQL</div>
       </div>
-      <div className="flex items-center justify-center p-6">
-        <motion.form
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35 }}
-          onSubmit={submit}
-          className="w-full max-w-sm space-y-5"
-        >
+
+      <div className="flex items-center justify-center p-6 sm:p-10">
+        <form onSubmit={submit} className="w-full max-w-[22rem] space-y-5 fade-up">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <div className="display text-xl font-semibold lg:hidden">{t('app.name')}</div>
-              <h1 className="display mt-2 text-3xl font-semibold lg:mt-0">{t('login.title')}</h1>
-              <p className="mt-1 text-sm text-muted">{t('login.subtitle')}</p>
+              <div className="display text-xl font-semibold lg:hidden">CELTTO-TOTEMS</div>
+              <h1 className="display mt-1 text-[1.75rem] font-semibold tracking-tight">{t('login.title')}</h1>
+              <p className="mt-1 text-[14px] text-muted">{t('login.subtitle')}</p>
             </div>
             <LanguageSwitcher />
           </div>
@@ -78,14 +66,14 @@ export default function Login() {
             <input className={inputCls} type="password" value={password} onChange={(e) => setP(e.target.value)} autoComplete="current-password" required />
           </Field>
           {error && (
-            <p role="alert" className="rounded-lg bg-danger/5 px-3 py-2 text-sm text-danger">
+            <p role="alert" className="rounded-lg border border-red-200 bg-danger-soft px-3 py-2 text-[13.5px] text-danger">
               {error}
             </p>
           )}
           <Button type="submit" size="lg" className="w-full" disabled={busy}>
             {busy ? t('app.loading') : t('login.submit')}
           </Button>
-        </motion.form>
+        </form>
       </div>
     </div>
   )

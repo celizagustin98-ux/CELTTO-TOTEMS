@@ -22,8 +22,8 @@ export default function Overview() {
   if (ov.error) return <ErrorBox msg={ov.error} retry={ov.reload} />
   const sectors = ov.data!.sectors
   return (
-    <div className="space-y-8">
-      <header><h1 className="display text-3xl font-semibold">Resumen de hoy</h1><p className="text-sm text-muted">Se actualiza solo cuando cambia una cola.</p></header>
+    <div className="space-y-6 fade-up">
+      <header className="mb-2"><h1 className="display text-[1.65rem] font-semibold tracking-tight">Resumen de hoy</h1><p className="mt-1 text-[14px] text-muted">Se actualiza en vivo cuando cambia una cola.</p></header>
       {sectors.length === 0 ? <Empty title="Todavía no hay secretarías" hint="Creá la primera en “Secretarías y botones” para empezar a emitir turnos." /> : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {sectors.map((s) => (

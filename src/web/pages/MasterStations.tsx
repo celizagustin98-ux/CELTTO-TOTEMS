@@ -69,11 +69,11 @@ export default function Stations() {
   }
 
   return (
-    <div className="space-y-4">
-      <header>
-        <h1 className="display text-2xl font-semibold">Tótems y TVs</h1>
-        <p className="text-sm text-muted">
-          Al crear una estación se genera una <strong>URL fija</strong>. Pegala en el navegador del tótem o de la TV (modo kiosk) y siempre abre esa pantalla con su secretaría.
+    <div className="space-y-5 fade-up">
+      <header className="mb-1">
+        <h1 className="display text-[1.65rem] font-semibold tracking-tight">Tótems y TVs</h1>
+        <p className="mt-1 max-w-2xl text-[14px] leading-relaxed text-muted">
+          Cada estación genera una URL fija. Pegala en el navegador del equipo (modo kiosk) para abrir siempre ese tótem o TV con su secretaría.
         </p>
       </header>
 
@@ -104,14 +104,14 @@ export default function Stations() {
       </Card>
 
       {lastCreated && (
-        <Card className="border-emerald-300 bg-emerald-50 p-4">
-          <div className="text-sm font-medium text-emerald-900">URL de {lastCreated.kind === 'totem' ? 'tótem' : 'TV'}: {lastCreated.name}</div>
+        <Card className="border-teal-200 bg-teal-50/80 p-4">
+          <div className="text-sm font-medium text-teal-950">URL de {lastCreated.kind === 'totem' ? 'tótem' : 'TV'}: {lastCreated.name}</div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <code className="rounded bg-white px-3 py-2 text-sm break-all">{lastCreated.url}</code>
             <Button size="sm" variant="soft" onClick={() => void copy(lastCreated.url)}>
               <Copy size={16} /> Copiar
             </Button>
-            <a href={lastCreated.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sm text-emerald-800 underline">
+            <a href={lastCreated.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sm text-teal-800 underline">
               <ExternalLink size={14} /> Abrir
             </a>
           </div>

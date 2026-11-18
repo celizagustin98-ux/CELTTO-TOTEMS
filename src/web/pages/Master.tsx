@@ -26,35 +26,61 @@ const NAV = [
 export default function Master() {
   const { t } = useTranslation()
   const { user, logout } = useAuth()
-  const link = ({ isActive }: { isActive: boolean }) => `flex items-center gap-3 rounded-lg px-3 py-2.5 text-[15px] font-medium transition-colors ${isActive ? 'bg-white/12 text-white' : 'text-white/65 hover:bg-white/8 hover:text-white'}`
+  const link = ({ isActive }: { isActive: boolean }) =>
+    `flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13.5px] font-medium transition-colors ${
+      isActive ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'
+    }`
+
   return (
     <div className="flex min-h-full flex-col lg:flex-row">
-      <aside className="flex shrink-0 flex-col bg-ink p-4 text-white lg:sticky lg:top-0 lg:h-screen lg:w-64">
-        <div className="display px-3 pb-4 pt-2 text-xl font-semibold tracking-tight">CELTTO-TOTEMS</div>
-        <nav className="flex gap-1 overflow-x-auto lg:flex-col lg:overflow-visible" aria-label="Secciones">
-          {NAV.map((n) => <NavLink key={n.to} to={n.to} end={n.end} className={link}><n.icon size={18} /><span className="whitespace-nowrap">{t(n.labelKey)}</span></NavLink>)}
+      <aside className="flex shrink-0 flex-col border-b border-white/5 bg-sidebar text-white lg:sticky lg:top-0 lg:h-screen lg:w-[15.5rem] lg:border-b-0 lg:border-r lg:border-white/5">
+        <div className="flex items-center gap-2.5 px-4 py-4">
+          <div className="grid h-8 w-8 place-items-center rounded-lg bg-teal-600 text-[11px] font-bold tracking-tight">CT</div>
+          <div className="min-w-0">
+            <div className="truncate text-[13px] font-semibold tracking-tight">CELTTO</div>
+            <div className="truncate text-[11px] text-slate-500">Control de turnos</div>
+          </div>
+        </div>
+        <nav className="flex gap-0.5 overflow-x-auto px-2 pb-2 lg:flex-1 lg:flex-col lg:overflow-y-auto lg:px-2.5" aria-label="Secciones">
+          {NAV.map((n) => (
+            <NavLink key={n.to} to={n.to} end={n.end} className={link}>
+              <n.icon size={16} strokeWidth={1.75} className="shrink-0 opacity-80" />
+              <span className="whitespace-nowrap">{t(n.labelKey)}</span>
+            </NavLink>
+          ))}
         </nav>
-        <div className="mt-4 hidden border-t border-white/10 pt-4 lg:mt-auto lg:block">
-          <a href="/totem" target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-white/65 hover:text-white"><ExternalLink size={15} />{t('nav.openTotem')}</a>
-          <a href="/tv" target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-white/65 hover:text-white"><ExternalLink size={15} />{t('nav.openTv')}</a>
-          <div className="mb-2 px-1"><LanguageSwitcher className="text-white" /></div>
-          <div className="mt-3 flex items-center justify-between rounded-lg bg-white/8 px-3 py-2.5">
-            <div className="min-w-0"><div className="truncate text-sm font-medium">{user?.displayName}</div><div className="text-xs text-white/55">{t('nav.master')}</div></div>
-            <button onClick={logout} aria-label="Cerrar sesión" className="rounded-md p-1.5 text-white/65 hover:bg-white/10 hover:text-white"><LogOut size={18} /></button>
+        <div className="hidden space-y-1 border-t border-white/5 p-3 lg:block">
+          <a href="/totem" target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[12.5px] text-slate-500 hover:bg-white/5 hover:text-slate-200">
+            <ExternalLink size={13} /> {t('nav.openTotem')}
+          </a>
+          <a href="/tv" target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[12.5px] text-slate-500 hover:bg-white/5 hover:text-slate-200">
+            <ExternalLink size={13} /> {t('nav.openTv')}
+          </a>
+          <div className="px-1 pt-1">
+            <LanguageSwitcher className="text-slate-400" />
+          </div>
+          <div className="mt-2 flex items-center justify-between rounded-lg bg-white/5 px-2.5 py-2">
+            <div className="min-w-0">
+              <div className="truncate text-[13px] font-medium text-slate-100">{user?.displayName}</div>
+              <div className="text-[11px] text-slate-500">{t('nav.master')}</div>
+            </div>
+            <button onClick={logout} aria-label="Cerrar sesión" className="rounded-md p-1.5 text-slate-500 hover:bg-white/10 hover:text-white">
+              <LogOut size={16} />
+            </button>
           </div>
         </div>
       </aside>
-      <main className="min-w-0 flex-1 p-5 sm:p-8">
-        <div className="mx-auto max-w-6xl">
+      <main className="min-w-0 flex-1">
+        <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
           <Routes>
             <Route index element={<Overview />} />
             <Route path="secretarias" element={<Sectors />} />
             <Route path="usuarios" element={<UsersPage />} />
             <Route path="configuracion" element={<SettingsPage />} />
             <Route path="reportes" element={<Reports />} />
-          <Route path="prioridades" element={<Priorities />} />
-          <Route path="escritorios" element={<Desks />} />
-          <Route path="estaciones" element={<Stations />} />
+            <Route path="prioridades" element={<Priorities />} />
+            <Route path="escritorios" element={<Desks />} />
+            <Route path="estaciones" element={<Stations />} />
             <Route path="*" element={<Navigate to="/master" replace />} />
           </Routes>
         </div>
