@@ -130,6 +130,17 @@ export default function Tv() {
   const history = st?.recent.slice(0, st.settings.tv_history_size ?? 6) ?? []
   const color = featured?.t.color ?? '#2f6fed'
 
+  if (routeKey && stationErr) {
+    return (
+      <div className="grid h-full place-items-center bg-ink p-8 text-center text-white">
+        <div>
+          <div className="display text-3xl">TV no configurada</div>
+          <p className="mt-2 text-white/70">{stationErr}</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex min-h-full bg-ink text-white">
       <main className="relative flex flex-1 flex-col items-center justify-center overflow-hidden p-8">
