@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-display: 'Bricolage Grotesque Variable', ui-sans-serif, system-ui, sans-serif;
   --font-sans: 'Instrument Sans Variable', ui-sans-serif, system-ui, sans-serif;
@@ -22,6 +24,30 @@
   --color-warn-soft: #fffbeb;
   --color-sidebar: #0f172a;
   --color-sidebar-hover: #1e293b;
+  --color-night: #0b1220;
+}
+
+/* Tema oscuro de los paneles de personal (maestro y secretaria) */
+.dark {
+  --color-paper: #0b1220;
+  --color-surface: #111a2b;
+  --color-ink: #e6edf7;
+  --color-ink-soft: #cbd5e1;
+  --color-muted: #8a9bb3;
+  --color-line: #1f2a3d;
+  --color-line-strong: #2d3b53;
+  --color-brand: #14b8a6;
+  --color-brand-hover: #2dd4bf;
+  --color-brand-soft: #0f3b38;
+  --color-danger: #f87171;
+  --color-danger-soft: #3a1414;
+  --color-ok: #34d399;
+  --color-ok-soft: #0c2e22;
+  --color-warn: #fbbf24;
+  --color-warn-soft: #33260a;
+  --color-sidebar: #070c16;
+  --color-sidebar-hover: #111a2b;
+  color-scheme: dark;
 }
 
 html, body, #root { height: 100%; }
@@ -51,7 +77,6 @@ body {
   letter-spacing: -0.02em;
 }
 
-/* Soft product surface */
 .surface {
   background: var(--color-surface);
   border: 1px solid var(--color-line);
@@ -62,9 +87,7 @@ body {
   background: var(--color-surface);
   border: 1px solid var(--color-line);
   border-radius: 14px;
-  box-shadow:
-    0 1px 2px rgb(15 23 42 / 0.04),
-    0 8px 24px -8px rgb(15 23 42 / 0.08);
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.04), 0 12px 32px -10px rgb(15 23 42 / 0.18);
 }
 
 .stub {
@@ -86,64 +109,44 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 .fade-up { animation: fade-up 0.28s ease-out; }
+@keyframes ticker { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.ticker-track { display: inline-flex; white-space: nowrap; animation: ticker var(--ticker-dur, 40s) linear infinite; }
+@keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.pulse-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
+@keyframes float-soft { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+.float-soft { animation: float-soft 5s ease-in-out infinite; }
 
 @media (prefers-reduced-motion: reduce) {
-  .call-in, .fade-up { animation: none; }
+  .call-in, .fade-up, .ticker-track, .pulse-dot, .float-soft { animation: none; }
 }
 
-/* Tables */
-.table-pro {
-  width: 100%;
-  font-size: 0.875rem;
-  border-collapse: collapse;
-}
+.table-pro { width: 100%; font-size: 0.875rem; border-collapse: collapse; }
 .table-pro th {
-  text-align: left;
-  font-weight: 500;
-  color: var(--color-muted);
-  border-bottom: 1px solid var(--color-line);
-  padding: 0.625rem 0.75rem;
-  white-space: nowrap;
+  text-align: left; font-weight: 500; color: var(--color-muted);
+  border-bottom: 1px solid var(--color-line); padding: 0.625rem 0.75rem; white-space: nowrap;
 }
-.table-pro td {
-  border-bottom: 1px solid var(--color-line);
-  padding: 0.75rem;
-  vertical-align: middle;
-}
-.table-pro tbody tr:hover td {
-  background: #f8fafc;
-}
+.table-pro td { border-bottom: 1px solid var(--color-line); padding: 0.7rem 0.75rem; vertical-align: middle; }
+.table-pro tbody tr:last-child td { border-bottom: 0; }
+.table-pro tbody tr:hover td { background: color-mix(in srgb, var(--color-paper) 60%, transparent); }
 
-/* Badges */
 .badge {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 999px;
-  padding: 0.125rem 0.625rem;
-  font-size: 0.75rem;
-  font-weight: 550;
-  line-height: 1.4;
+  display: inline-flex; align-items: center; gap: 0.3rem; border-radius: 999px;
+  padding: 0.125rem 0.625rem; font-size: 0.75rem; font-weight: 550; line-height: 1.4; white-space: nowrap;
 }
-.badge-muted { background: #f1f5f9; color: #475569; }
+.badge-muted { background: color-mix(in srgb, var(--color-muted) 14%, transparent); color: var(--color-muted); }
 .badge-ok { background: var(--color-ok-soft); color: var(--color-ok); }
 .badge-warn { background: var(--color-warn-soft); color: var(--color-warn); }
 .badge-danger { background: var(--color-danger-soft); color: var(--color-danger); }
-.badge-brand { background: var(--color-brand-soft); color: #0f766e; }
+.badge-brand { background: var(--color-brand-soft); color: var(--color-brand); }
 
+/* Ticket impreso (80 mm) */
 #print-area { display: none; }
 @media print {
   @page { size: 80mm auto; margin: 0; }
   body * { visibility: hidden; }
   #print-area, #print-area * { visibility: visible; }
   #print-area {
-    display: block;
-    position: absolute;
-    left: 0; top: 0;
-    width: 80mm;
-    padding: 6mm 4mm;
-    color: #000;
-    background: #fff;
-    text-align: center;
-    font-family: system-ui, sans-serif;
+    display: block; position: absolute; left: 0; top: 0; width: 80mm; padding: 5mm 4mm;
+    color: #000; background: #fff; text-align: center; font-family: system-ui, sans-serif;
   }
 }

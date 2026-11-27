@@ -10,8 +10,9 @@ Más adelante la base puede moverse a **SQL Server en Windows** sin cambiar la a
 
 | Pantalla | Dirección | Quién la usa |
 |---|---|---|
-| Panel maestro | `/master` | Solo el dueño: secretarías, botones, usuarios, configuración y reportes |
+| Panel maestro | `/master` | Dueño, administradores y técnicos (según rol): secretarías, botones, usuarios, configuración y reportes |
 | Panel de secretaria | `/panel` | Cada secretaria con su usuario; ve solo la cola de su secretaría |
+| Seguimiento del turno | `/t/CODIGO` | El paciente escanea el QR del ticket y sigue su turno desde el celular |
 | Tótem | `/totem` | Pacientes (una PC táctil por secretaría) |
 | Pantalla de sala | `/tv` | TV de la sala de espera (`/tv?sectors=1,2` para filtrar secretarías) |
 
@@ -23,14 +24,14 @@ marca ausente o deriva. La TV muestra el llamado en el color de la secretaría, 
 ## Requisitos
 
 - Docker + Docker Compose (servidor Linux / Proxmox)
-- O Node.js 20+ si corrés sin Docker
+- O Node.js 22+ si corrés sin Docker
 
 ## Instalación rápida con Docker (recomendado)
 
 ```bash
 # 1. Configuración
 cp .env.example .env
-# Editá POSTGRES_PASSWORD en .env
+# Completá POSTGRES_PASSWORD y SESSION_SECRET (32+ caracteres) en .env
 
 # 2. Levantar PostgreSQL + aplicación
 docker compose up -d --build
@@ -55,19 +56,36 @@ docker compose exec app npx tsx src/server/cli.ts migrate
 docker compose restart app
 ```
 
-## Desarrollo local (sin Docker)
+## Desarrollo local (sin Docker ni PostgreSQL instalado)
 
 ```bash
-cp .env.example .env
-# Opción A: PostgreSQL local → DB_CLIENT=postgres y datos de conexión
-# Opción B: SQLite → DB_CLIENT=sqlite
-
 npm install
-npm run migrate && npm run owner:create && npm run seed:demo
-npm run dev:server       # API en :8080
-npm run dev:web          # interfaz en :5173
-npm test
+npm run dev
 ```
+
+`npm run dev` levanta todo con un solo comando:
+
+- Un **PostgreSQL embebido** (PGlite) en `127.0.0.1:5433`, con los datos en `data/pglite/` (ignorado por git).
+- Migraciones, usuario dueño y datos de demostración (solo la primera vez).
+- La API en `:8080` y la interfaz en `http://127.0.0.1:5173`.
+
+El usuario dueño y su contraseña de prueba quedan en `.env.development.local` (ignorado por git).
+Las secretarias de demostración son `secretaria.a` y `secretaria.b`, con contraseña `demo12345`.
+
+```bash
+npm test           # tests de la API contra PostgreSQL embebido
+npm run typecheck  # tipos del servidor y de la web
+npm run build      # compilación de producción
+```
+
+## Roles
+
+| Rol | Puede |
+|---|---|
+| Dueño | Todo. Se crea por consola (`owner:create`) |
+| Administrador | Todo, salvo administrar al dueño o a otros administradores |
+| Técnico | Ver el panel maestro y administrar tótems y TVs; no cambia configuración ni usuarios |
+| Secretaria | Atender la cola de su secretaría desde `/panel` |
 
 ## Configurar los equipos clientes
 
@@ -75,7 +93,9 @@ npm test
   ```
   chrome --kiosk --kiosk-printing http://SERVIDOR:8080/totem
   ```
-  La primera vez pide elegir la secretaría. Para cambiarla: tocar 5 veces la esquina superior izquierda e ingresar el PIN (fábrica `0000`).
+  Lo recomendado es crear cada equipo en **Panel maestro → Tótems y TVs** y abrir su dirección fija (`/totem/st_…`):
+  queda con su secretaría e idioma. Sin dirección fija, la primera vez pide elegir la secretaría; para cambiarla,
+  tocar 5 veces la esquina superior izquierda e ingresar el PIN (fábrica `0000`: cambialo en Configuración).
 
 - **TV de la sala:**
   ```
@@ -110,7 +130,11 @@ La aplicación **sigue en Linux**. Solo cambia el destino de la base:
 
 ## Notas de seguridad
 
-- Contraseñas con hash `scrypt`; sesiones en base con cookie `httpOnly`.
+- Contraseñas con hash `scrypt`; sesiones en base con cookie `httpOnly` + `SameSite=Strict`.
+- Límite de intentos en login, PIN del tótem y emisión de turnos (compartido entre instancias con Redis).
+- Cerrar sesión o cambiar la contraseña invalida la sesión en el servidor.
+- Cabeceras de seguridad (CSP, HSTS con HTTPS, X-Frame-Options) y WebSocket solo desde el mismo origen.
+- Auditoría de accesos y cambios en el panel maestro.
 - Una secretaria solo accede a la cola de su secretaría (validado en el servidor).
 - El panel maestro solo admite rol dueño (creado por CLI).
 - Fuera de la red interna: HTTPS + `COOKIE_SECURE=true`.

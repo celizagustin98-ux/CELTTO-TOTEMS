@@ -24,6 +24,7 @@ export interface Database {
     prefix: string
     priority_id: number | null
     priority: number
+    icon: string | null
     sort_order: number
     active: number
   }
@@ -51,6 +52,7 @@ export interface Database {
     device_key: string
     active: number
     last_seen_at: string | null
+    lang: string | null
     created_at: string
   }
   users: {
@@ -63,6 +65,7 @@ export interface Database {
     desk_id: number | null
     desk: string | null
     active: number
+    last_login_at: string | null
     created_at: string
   }
   sessions: { token_hash: string; user_id: number; expires_at: string; created_at: string }
@@ -88,6 +91,7 @@ export interface Database {
     desk_id: number | null
     recall_count: number
     print_count: number
+    dni: string | null
   }
   counters: { counter_key: string; counter_value: number }
   ticket_events: {
@@ -117,6 +121,7 @@ export interface Database {
     created_at: string
   }
   settings: { setting_key: string; setting_value: string }
+  assets: { asset_key: string; mime: string; data: string; updated_at: string }
 }
 
 export interface AuthUser {

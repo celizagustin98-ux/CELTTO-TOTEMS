@@ -6,8 +6,8 @@ import { migrations } from './migrations.js'
 
 export async function createCtx(cfg: Config = loadConfig()): Promise<Ctx> {
   const { db, client } = await createDb(cfg)
-  const hub = await createHub(cfg.redisUrl)
-  return { db, client, cfg, hub: hub as any }
+  const hub = await createHub(cfg.redisUrl, { maxClients: cfg.wsMaxClients, maxPerIp: cfg.wsMaxPerIp })
+  return { db, client, cfg, hub }
 }
 
 export const migrator = (ctx: Ctx) => new Migrator({ db: ctx.db, provider: { getMigrations: async () => migrations } })

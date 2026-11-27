@@ -2,7 +2,8 @@
 # El contenedor de runtime NO incluye código fuente TypeScript/React.
 
 # ---- build ----
-FROM node:20-bookworm-slim AS build
+# Node 22: varias dependencias (kysely, i18next, tedious) lo requieren
+FROM node:22-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -13,7 +14,7 @@ RUN npm run build \
   && rm -rf src tsconfig.web.json vite.config.ts
 
 # ---- runtime (solo artefactos) ----
-FROM node:20-bookworm-slim AS runtime
+FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production \
@@ -26,7 +27,8 @@ RUN apt-get update \
   && groupadd -r celtto && useradd -r -g celtto -d /app -s /sbin/nologin celtto
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+# Sin dependencias opcionales: better-sqlite3 es solo para pruebas y no se usa en producción
+RUN npm ci --omit=dev --omit=optional && npm cache clean --force
 
 COPY --from=build /app/dist ./dist
 

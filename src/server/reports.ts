@@ -26,6 +26,7 @@ export async function detailedReport(ctx: Ctx, from: string, to: string) {
       'tickets.recall_count',
       'tickets.business_date',
       'tickets.sector_id',
+      'tickets.dni',
       'sectors.name as sector_name',
       'sectors.color as sector_color',
       'buttons.label as button_label',
@@ -41,12 +42,14 @@ export async function detailedReport(ctx: Ctx, from: string, to: string) {
   const byHour: Record<string, number> = {}
   const byDay: Record<string, number> = {}
   const byPrefix: Record<string, number> = {}
+  const hourFmt = new Intl.DateTimeFormat('en-GB', { timeZone: ctx.cfg.timezone, hour: '2-digit', hourCycle: 'h23' })
+  const localHour = (iso: string | null) => (iso ? hourFmt.format(new Date(iso)).padStart(2, '0') : '??')
 
   for (const t of tickets) {
     byStatus[t.status] = (byStatus[t.status] ?? 0) + 1
     byDay[t.business_date] = (byDay[t.business_date] ?? 0) + 1
     byPrefix[t.prefix] = (byPrefix[t.prefix] ?? 0) + 1
-    const hour = (t.created_at || '').slice(11, 13) || '??'
+    const hour = localHour(t.created_at)
     byHour[hour] = (byHour[hour] ?? 0) + 1
     const key = String(t.sector_id)
     if (!bySector[key]) {
@@ -112,6 +115,7 @@ export async function detailedReport(ctx: Ctx, from: string, to: string) {
       waitMin: mins(t.created_at, t.called_at ?? t.started_at),
       serviceMin: mins(t.started_at, t.finished_at),
       recalls: t.recall_count,
+      dni: t.dni,
       date: t.business_date,
     })),
   }

@@ -6,26 +6,38 @@ import { insertId, nowIso } from '../src/server/db.js'
 import { closeStaleTickets } from '../src/server/queue.js'
 import { hashPassword } from '../src/server/security.js'
 import { createCtx, runMigrations } from '../src/server/runtime.js'
+import { PGlite } from '@electric-sql/pglite'
+import { PGLiteSocketServer } from '@electric-sql/pglite-socket'
+
+// Los tests corren contra PostgreSQL real (PGlite embebido en memoria), el mismo motor que producción
+const PG_PORT = 55432 + Math.floor(Math.random() * 1000)
+let pg: PGlite
+let pgServer: PGLiteSocketServer
 
 let ctx: Awaited<ReturnType<typeof createCtx>>
 let app: Awaited<ReturnType<typeof buildApp>>
 let owner = '', secA = '', secA2 = '', secB = ''
 let sectorA = 0, sectorB = 0, btnNew = 0, btnPrio = 0, btnB = 0
 
-const call = async (method: string, url: string, cookie = '', body?: unknown) => {
-  const res = await app.inject({ method: method as any, url, headers: cookie ? { cookie } : {}, payload: body as any })
+const call = async (method: string, url: string, cookie = '', body?: unknown, ip = '10.0.0.1') => {
+  const res = await app.inject({ method: method as any, url, headers: cookie ? { cookie } : {}, payload: body as any, remoteAddress: ip })
   return { status: res.statusCode, body: res.body ? JSON.parse(res.body) : null, cookie: (res.cookies[0] ? `sid=${res.cookies[0].value}` : '') }
 }
 const login = async (username: string, password: string) => (await call('POST', '/api/auth/login', '', { username, password })).cookie
 
 before(async () => {
-  ctx = await createCtx({ ...loadConfig({ DB_CLIENT: 'sqlite', SQLITE_PATH: ':memory:', LOG_HTTP: 'false' } as any) })
+  pg = await PGlite.create()
+  pgServer = new PGLiteSocketServer({ db: pg, port: PG_PORT, host: '127.0.0.1', maxConnections: 20 })
+  await pgServer.start()
+  ctx = await createCtx({
+    ...loadConfig({ DB_CLIENT: 'postgres', POSTGRES_HOST: '127.0.0.1', POSTGRES_PORT: String(PG_PORT), POSTGRES_DATABASE: 'postgres', POSTGRES_USER: 'postgres', POSTGRES_PASSWORD: 'postgres', PG_POOL_MIN: '0', LOG_HTTP: 'false', TICKET_RATE_PER_MIN: '1000' } as any),
+  })
   await runMigrations(ctx)
   await insertId(ctx, ctx.db, 'users', { username: 'dueno', display_name: 'Dueño', password_hash: await hashPassword('clave-dueno-1'), role: 'owner', sector_id: null, desk: null, active: 1, created_at: nowIso() })
   app = await buildApp(ctx)
   owner = await login('dueno', 'clave-dueno-1')
 })
-after(async () => { await app.close(); await ctx.db.destroy() })
+after(async () => { await app.close(); await ctx.db.destroy(); await pgServer.stop(); await pg.close() })
 
 describe('panel maestro', () => {
   test('solo el dueño entra al panel maestro', async () => {
@@ -145,5 +157,81 @@ describe('configuración, reportes y cierre', () => {
     const id = users.find((u: any) => u.username === 'sec.b').id
     await call('PUT', `/api/admin/users/${id}`, owner, { active: false })
     assert.equal((await call('GET', '/api/desk/state', secB)).status, 401)
+  })
+})
+
+describe('seguridad', () => {
+  test('el health no expone detalles internos', async () => {
+    const r = await call('GET', '/api/health')
+    assert.equal(r.status, 200)
+    assert.deepEqual(Object.keys(r.body).sort(), ['dbLatencyMs', 'ok', 'version'])
+  })
+
+  test('cerrar sesión invalida el token en el servidor', async () => {
+    const c = await login('dueno', 'clave-dueno-1')
+    assert.equal((await call('GET', '/api/auth/me', c)).status, 200)
+    await call('POST', '/api/auth/logout', c)
+    assert.equal((await call('GET', '/api/auth/me', c)).status, 401)
+  })
+
+  test('bloquea la fuerza bruta del login', async () => {
+    let last = 0
+    for (let i = 0; i < 10; i++) last = (await call('POST', '/api/auth/login', '', { username: 'atacado', password: 'x' }, '10.9.9.9')).status
+    assert.equal(last, 429)
+  })
+
+  test('bloquea la fuerza bruta del PIN al vincular estaciones', async () => {
+    let last = 0
+    for (let i = 0; i < 12; i++) last = (await call('POST', '/api/public/stations/bind', '', { kind: 'tv', deviceKey: 'abcdefgh12', sectorId: sectorA, pin: String(1000 + i) }, '10.8.8.8')).status
+    assert.equal(last, 429)
+  })
+
+  test('el CSV neutraliza fórmulas', async () => {
+    const id = (await call('POST', '/api/admin/sectors', owner, { name: '=HYPERLINK("x")', color: '#123456' })).body.id
+    const b = (await call('POST', '/api/admin/buttons', owner, { sectorId: id, label: 'Test', prefix: 'Z' })).body.id
+    await call('POST', '/api/public/tickets', '', { buttonId: b })
+    const res = await app.inject({ method: 'GET', url: '/api/admin/stats/export.csv', headers: { cookie: owner } })
+    assert.match(res.body, /"'=HYPERLINK\(""x""\)"/)
+  })
+
+  test('el técnico ve el panel pero no cambia la configuración', async () => {
+    assert.equal((await call('POST', '/api/admin/users', owner, { username: 'tecnico', displayName: 'Téc', password: 'password123', role: 'tech' })).status, 200)
+    const tech = await login('tecnico', 'password123')
+    assert.equal((await call('GET', '/api/admin/stations', tech)).status, 200)
+    assert.equal((await call('PUT', '/api/admin/settings', tech, { org_name: 'x' })).status, 403)
+    assert.equal((await call('GET', '/api/admin/users', tech)).status, 403)
+  })
+
+  test('cambiar la contraseña cierra las otras sesiones', async () => {
+    await call('POST', '/api/admin/users', owner, { username: 'clave.test', displayName: 'Clave', password: 'password123', role: 'secretary', sectorId: sectorA })
+    const s1 = await login('clave.test', 'password123')
+    const s2 = await login('clave.test', 'password123')
+    assert.equal((await call('PUT', '/api/auth/password', s1, { current: 'password123', next: 'nueva-clave-99' })).status, 200)
+    assert.equal((await call('GET', '/api/auth/me', s1)).status, 200)
+    assert.equal((await call('GET', '/api/auth/me', s2)).status, 401)
+  })
+})
+
+describe('funcionalidad nueva', () => {
+  test('la TV vinculada a una secretaría informa su filtro y la multimedia', async () => {
+    await call('PUT', '/api/admin/settings', owner, { tv_media_enabled: true, tv_media_urls: 'https://ejemplo.com/a.mp4\njavascript:alert(1)' })
+    const st = (await call('POST', '/api/admin/stations', owner, { kind: 'tv', name: 'TV A', sectorId: sectorA })).body
+    const tv = (await call('GET', `/api/public/tv?deviceKey=${st.deviceKey}`)).body
+    assert.deepEqual(tv.sectorIds, [sectorA])
+    assert.deepEqual(tv.settings.tv_media_urls, ['https://ejemplo.com/a.mp4'])
+  })
+
+  test('el DNI se guarda solo si está habilitado', async () => {
+    await call('PUT', '/api/admin/settings', owner, { totem_dni_enabled: true })
+    const t = (await call('POST', '/api/public/tickets', '', { buttonId: btnB, dni: '30.123.456' })).body
+    const row = await ctx.db.selectFrom('tickets').select('dni').where('id', '=', t.id).executeTakeFirstOrThrow()
+    assert.equal(row.dni, '30123456')
+  })
+
+  test('el estado público del turno calcula personas adelante', async () => {
+    const t = (await call('POST', '/api/public/tickets', '', { buttonId: btnB })).body
+    const s = (await call('GET', `/api/public/ticket/${t.code}`)).body
+    assert.equal(s.status, 'waiting')
+    assert.ok(s.waitingAhead >= 1)
   })
 })

@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Instalar dependencias (lockfile exacto)
+        run: npm ci --no-audit --no-fund
+      - name: Verificar que el lockfile use solo el registro oficial
+        run: |
+          if grep -E '"resolved": "http' package-lock.json | grep -v 'https://registry.npmjs.org/'; then
+            echo "El package-lock.json resuelve paquetes desde un origen no oficial" && exit 1
+          fi
+      - name: Tipos (servidor y web)
+        run: npm run typecheck
+      - name: Compilar
+        run: npm run build
+      - name: Tests (PostgreSQL embebido)
+        run: npm test
