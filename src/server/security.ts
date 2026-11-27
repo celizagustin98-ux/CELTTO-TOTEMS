@@ -17,18 +17,64 @@ export async function verifyPassword(pw: string, stored: string): Promise<boolea
   return got.length === expected.length && timingSafeEqual(got, expected)
 }
 
+/** Hash fijo para comparar cuando el usuario no existe: iguala el tiempo de respuesta. */
+let dummyHash: Promise<string> | null = null
+export const getDummyHash = () => (dummyHash ??= hashPassword(randomBytes(16).toString('hex')))
+
+/** Comparación de textos en tiempo constante (PIN, claves cortas). */
+export function safeEqual(a: string, b: string): boolean {
+  const ha = createHash('sha256').update(a).digest()
+  const hb = createHash('sha256').update(b).digest()
+  return timingSafeEqual(ha, hb) && a.length === b.length
+}
+
 export const sha256 = (v: string) => createHash('sha256').update(v).digest('hex')
 export const newToken = () => randomBytes(32).toString('base64url')
 
-export class RateLimiter {
-  private hits = new Map<string, number[]>()
-  
-  hit(key: string, max: number, windowMs: number): boolean {
+/** Contador mínimo que necesita el limitador (Redis o memoria). */
+export interface CounterStore {
+  incr(key: string, windowMs: number): Promise<number>
+  reset(key: string): Promise<void>
+}
+
+export class MemoryCounterStore implements CounterStore {
+  private hits = new Map<string, { n: number; until: number }>()
+  async incr(key: string, windowMs: number) {
     const now = Date.now()
-    const arr = (this.hits.get(key) ?? []).filter((t) => now - t < windowMs)
-    if (arr.length >= max) { this.hits.set(key, arr); return false }
-    arr.push(now); this.hits.set(key, arr)
-    if (this.hits.size > 5000) for (const [k, v] of this.hits) if (!v.some((t) => now - t < windowMs)) this.hits.delete(k)
-    return true
+    const cur = this.hits.get(key)
+    const entry = !cur || cur.until <= now ? { n: 0, until: now + windowMs } : cur
+    entry.n++
+    this.hits.set(key, entry)
+    if (this.hits.size > 10_000) for (const [k, v] of this.hits) if (v.until <= now) this.hits.delete(k)
+    return entry.n
   }
+  async reset(key: string) {
+    this.hits.delete(key)
+  }
+}
+
+/**
+ * Limitador por ventana fija. Con Redis el conteo es compartido entre instancias
+ * (docker compose --scale app=N); sin Redis queda en memoria del proceso.
+ */
+export class RateLimiter {
+  constructor(private store: CounterStore, private prefix: string) {}
+  async hit(key: string, max: number, windowMs: number): Promise<boolean> {
+    try {
+      return (await this.store.incr(`rl:${this.prefix}:${key}`, windowMs)) <= max
+    } catch {
+      return true
+    }
+  }
+  async reset(key: string) {
+    try { await this.store.reset(`rl:${this.prefix}:${key}`) } catch { /* sin conteo */ }
+  }
+}
+
+/** Evita que un texto se interprete como fórmula al abrir el CSV en Excel/LibreOffice. */
+export function csvCell(v: unknown): string {
+  if (v === null || v === undefined) return ''
+  let s = String(v)
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`
+  return /[",\n\r;]/.test(s) || s !== String(v) ? `"${s.replace(/"/g, '""')}"` : s
 }

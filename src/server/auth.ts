@@ -11,21 +11,19 @@ declare module 'fastify' {
   }
 }
 
+export const ROLES: UserRole[] = ['owner', 'admin', 'tech', 'secretary']
+/** Quién entra al panel maestro (lectura). */
+export const STAFF_ROLES: UserRole[] = ['owner', 'admin', 'tech']
+/** Quién puede modificar la configuración del sistema. */
+export const MANAGER_ROLES: UserRole[] = ['owner', 'admin']
+
 export async function loadUser(ctx: Ctx, req: FastifyRequest): Promise<AuthUser | null> {
   const sid = req.cookies?.sid
-  if (!sid) return null
+  if (!sid || sid.length > 200) return null
   const r = await ctx.db
     .selectFrom('sessions')
     .innerJoin('users', 'users.id', 'sessions.user_id')
-    .select([
-      'users.id',
-      'users.username',
-      'users.display_name',
-      'users.role',
-      'users.sector_id',
-      'users.desk',
-      'users.desk_id',
-    ])
+    .select(['users.id', 'users.username', 'users.display_name', 'users.role', 'users.sector_id', 'users.desk', 'users.desk_id'])
     .where('sessions.token_hash', '=', sha256(sid))
     .where('sessions.expires_at', '>', nowIso())
     .where('users.active', '=', 1)
@@ -50,7 +48,7 @@ export const requireRole = (ctx: Ctx, ...roles: UserRole[]) => async (req: Fasti
   req.user = u
 }
 
-export const requireStaff = (ctx: Ctx) => requireRole(ctx, 'owner', 'admin', 'tech')
+export const requireStaff = (ctx: Ctx) => requireRole(ctx, ...STAFF_ROLES)
 
 export async function openSession(ctx: Ctx, reply: FastifyReply, userId: number) {
   const token = newToken()
@@ -72,4 +70,23 @@ export async function openSession(ctx: Ctx, reply: FastifyReply, userId: number)
     maxAge: ctx.cfg.sessionHours * 3600,
     signed: false,
   })
+}
+
+/** Borra la sesión actual de la base (no solo la cookie). */
+export async function closeSession(ctx: Ctx, req: FastifyRequest, reply: FastifyReply) {
+  const sid = req.cookies?.sid
+  if (sid) await ctx.db.deleteFrom('sessions').where('token_hash', '=', sha256(sid)).execute()
+  reply.clearCookie('sid', { path: '/' })
+}
+
+/** Cierra todas las sesiones de un usuario salvo (opcionalmente) la actual. */
+export async function closeOtherSessions(ctx: Ctx, userId: number, keepSid?: string) {
+  let q = ctx.db.deleteFrom('sessions').where('user_id', '=', userId)
+  if (keepSid) q = q.where('token_hash', '!=', sha256(keepSid))
+  await q.execute()
+}
+
+export async function purgeExpiredSessions(ctx: Ctx) {
+  const r = await ctx.db.deleteFrom('sessions').where('expires_at', '<=', nowIso()).executeTakeFirst()
+  return Number(r.numDeletedRows ?? 0)
 }

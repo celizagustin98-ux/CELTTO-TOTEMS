@@ -52,19 +52,33 @@ async function main() {
         console.log(`Dueño "${username}" creado.`)
       }
     } else if (cmd === 'seed:demo') {
+      if (await ctx.db.selectFrom('sectors').select('id').limit(1).executeTakeFirst()) {
+        console.log('La base ya tiene secretarías: no se cargan datos de demostración.')
+        return
+      }
+      const prio = await ctx.db.selectFrom('priorities').select(['id', 'weight', 'name']).orderBy('weight').execute()
       const mk = async (name: string, color: string, welcome: string, order: number) => insertId(ctx, ctx.db, 'sectors', { name, color, welcome_message: welcome, sort_order: order, active: 1, created_at: nowIso() })
-      const a = await mk('Secretaría A', '#2F6FED', 'Bienvenido. Tocá una opción para sacar tu turno.', 1)
-      const b = await mk('Secretaría B', '#0E9F6E', 'Bienvenido a Secretaría B.', 2)
-      const btn = (sector: number, label: string, prefix: string, priority: number, order: number, subtitle?: string, target?: number) =>
-        insertId(ctx, ctx.db, 'buttons', { sector_id: sector, target_sector_id: target ?? sector, label, subtitle: subtitle ?? null, color: null, prefix, priority, sort_order: order, active: 1 })
-      await btn(a, 'Turno nuevo', 'A', 0, 1, 'Primera vez o nueva consulta')
-      await btn(a, 'Continuar atención', 'C', 1, 2, 'Ya tengo un trámite iniciado')
-      await btn(b, 'Retiro de resultados', 'R', 0, 1)
-      await btn(b, 'Consulta general', 'B', 0, 2)
-      for (const [u, n, s, d] of [['secretaria.a', 'Secretaria A', a, 'Box 1'], ['secretaria.b', 'Secretaria B', b, 'Box 2']] as const)
-        await insertId(ctx, ctx.db, 'users', { username: u, display_name: n, password_hash: await hashPassword('demo12345'), role: 'secretary', sector_id: s, desk: d, active: 1, created_at: nowIso() })
-      await saveSettings(ctx, {})
-      console.log('Datos de demostración creados. Usuarios: secretaria.a / secretaria.b — contraseña: demo12345')
+      const a = await mk('Secretaría A', '#2f6fed', 'Bienvenido. Tocá una opción para sacar tu turno.', 1)
+      const b = await mk('Secretaría B', '#0e9f6e', 'Bienvenido a Secretaría B.', 2)
+      const btn = (sector: number, label: string, prefix: string, level: number, order: number, subtitle: string | null, icon: string) => {
+        const p = prio[Math.min(level, prio.length - 1)]
+        return insertId(ctx, ctx.db, 'buttons', { sector_id: sector, target_sector_id: sector, label, subtitle, color: null, icon, prefix, priority: p?.weight ?? 0, priority_id: p?.id ?? null, sort_order: order, active: 1 })
+      }
+      await btn(a, 'Turno nuevo', 'A', 0, 1, 'Primera vez o nueva consulta', 'ticket')
+      await btn(a, 'Continuar atención', 'C', 0, 2, 'Ya tengo un trámite iniciado', 'repeat')
+      await btn(a, 'Atención preferencial', 'P', 1, 3, 'Embarazadas, mayores y movilidad reducida', 'accessibility')
+      await btn(b, 'Retiro de resultados', 'R', 0, 1, null, 'file-text')
+      await btn(b, 'Consulta general', 'B', 0, 2, null, 'message-circle')
+      const desks: Record<number, number[]> = {}
+      for (const [sector, names] of [[a, ['Box 1', 'Box 2']], [b, ['Box 3']]] as const) {
+        desks[sector] = []
+        for (const [i, n] of names.entries()) desks[sector].push(await insertId(ctx, ctx.db, 'desks', { sector_id: sector, name: n, code: n.replace(' ', ''), active: 1, sort_order: i + 1 }))
+      }
+      const pass = process.env.DEMO_PASSWORD || 'demo12345'
+      for (const [u, n, s, d, dn] of [['secretaria.a', 'Laura Gómez', a, desks[a][0], 'Box 1'], ['secretaria.b', 'Martín Pérez', b, desks[b][0], 'Box 3']] as const)
+        await insertId(ctx, ctx.db, 'users', { username: u, display_name: n, password_hash: await hashPassword(pass), role: 'secretary', sector_id: s, desk: dn, desk_id: d, active: 1, created_at: nowIso() })
+      await saveSettings(ctx, { org_name: 'Centro Médico Demo' })
+      console.log(`Datos de demostración creados. Usuarios: secretaria.a / secretaria.b — contraseña: ${pass}`)
     } else {
       console.log('Comandos: migrate | owner:create [--user x --pass y] | seed:demo | db:check | db:script')
     }

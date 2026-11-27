@@ -1,11 +1,7 @@
 import type { CallTicket } from './api'
-import { voiceLangFor } from '../i18n'
-import i18n from '../i18n'
+import i18n, { voiceLangFor } from '../i18n'
 
-export function fillTemplate(
-  tpl: string,
-  t: Pick<CallTicket, 'code' | 'prefix' | 'number' | 'sectorName' | 'desk'>,
-): string {
+export function fillTemplate(tpl: string, t: Pick<CallTicket, 'code' | 'prefix' | 'number' | 'sectorName' | 'desk'>): string {
   const place = t.desk ? `${t.sectorName}, ${t.desk}` : t.sectorName
   const map: Record<string, string> = {
     prefix: t.prefix.split('').join(' '),
@@ -23,16 +19,23 @@ function pickVoice(langs: string[]): SpeechSynthesisVoice | null {
   for (const lang of langs) {
     const exact = voices.find((v) => v.lang.toLowerCase() === lang.toLowerCase())
     if (exact) return exact
-    const prefix = lang.slice(0, 2).toLowerCase()
-    const soft = voices.find((v) => v.lang.toLowerCase().startsWith(prefix))
+    const soft = voices.find((v) => v.lang.toLowerCase().startsWith(lang.slice(0, 2).toLowerCase()))
     if (soft) return soft
   }
   return voices[0] ?? null
 }
 
+type Job = { text: string; rate: number; volume: number; chime: boolean; voice: boolean; langCode?: string }
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * Campanilla + voz con COLA: si llaman dos turnos seguidos, el segundo espera a que termine el primero
+ * (antes se cortaba el anuncio anterior con speechSynthesis.cancel()).
+ */
 export class Announcer {
   private ctx: AudioContext | null = null
-  private unlocked = false
+  private queue: Job[] = []
+  private playing = false
 
   constructor() {
     try {
@@ -42,8 +45,9 @@ export class Announcer {
     }
   }
 
+  /** true si el navegador ya permite reproducir audio (p. ej. Chrome con --autoplay-policy). */
   get ready() {
-    return this.unlocked && this.ctx?.state === 'running'
+    return this.ctx?.state === 'running'
   }
 
   async unlock() {
@@ -52,13 +56,12 @@ export class Announcer {
       const u = new SpeechSynthesisUtterance(' ')
       u.volume = 0
       speechSynthesis.speak(u)
-      this.unlocked = true
     } catch {
-      this.unlocked = false
+      /* sin audio */
     }
+    return this.ready
   }
 
-  /** Campanilla de llamado (dos tonos). Devuelve duración aprox. en ms. */
   chime(volume: number): number {
     const c = this.ctx
     if (!c || c.state !== 'running') return 0
@@ -83,40 +86,45 @@ export class Announcer {
     return 1100
   }
 
-  /** Voz del navegador según idioma de la app. */
-  speak(text: string, rate: number, langCode?: string) {
-    try {
-      speechSynthesis.cancel()
-      const u = new SpeechSynthesisUtterance(text)
-      const langs = voiceLangFor(langCode || i18n.language)
-      const v = pickVoice(langs)
-      if (v) {
-        u.voice = v
-        u.lang = v.lang
-      } else {
-        u.lang = langs[0] ?? 'es-AR'
+  /** Habla y resuelve cuando termina (con tope de seguridad por si el navegador no avisa). */
+  speak(text: string, rate: number, langCode?: string): Promise<void> {
+    return new Promise((resolve) => {
+      try {
+        const u = new SpeechSynthesisUtterance(text)
+        const langs = voiceLangFor(langCode || i18n.language)
+        const v = pickVoice(langs)
+        if (v) {
+          u.voice = v
+          u.lang = v.lang
+        } else u.lang = langs[0] ?? 'es-AR'
+        u.rate = Math.max(0.5, Math.min(1.5, rate))
+        const done = () => resolve()
+        u.onend = done
+        u.onerror = done
+        setTimeout(done, 4000 + text.length * 120)
+        speechSynthesis.speak(u)
+      } catch {
+        resolve()
       }
-      u.rate = Math.max(0.5, Math.min(1.5, rate))
-      u.pitch = 1
-      speechSynthesis.speak(u)
-    } catch {
-      /* sin voz disponible */
-    }
+    })
   }
 
-  /** Campanilla + voz con pausa entre ambas. */
-  announce(opts: {
-    text: string
-    rate: number
-    volume: number
-    chime: boolean
-    voice: boolean
-    langCode?: string
-  }) {
-    const delay = opts.chime ? this.chime(opts.volume) : 0
-    if (opts.voice && opts.text) {
-      window.setTimeout(() => this.speak(opts.text, opts.rate, opts.langCode), delay)
+  announce(job: Job) {
+    this.queue.push(job)
+    if (this.queue.length > 5) this.queue.splice(0, this.queue.length - 5)
+    void this.drain()
+  }
+
+  private async drain() {
+    if (this.playing) return
+    this.playing = true
+    while (this.queue.length) {
+      const j = this.queue.shift()!
+      const d = j.chime ? this.chime(j.volume) : 0
+      if (d) await wait(d)
+      if (j.voice && j.text) await this.speak(j.text, j.rate, j.langCode)
+      await wait(400)
     }
-    return delay
+    this.playing = false
   }
 }

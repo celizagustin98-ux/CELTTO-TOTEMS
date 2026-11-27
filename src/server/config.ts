@@ -1,6 +1,7 @@
 import 'dotenv/config'
 import { fileURLToPath } from 'node:url'
 import { randomBytes } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 
 export type DbClient = 'postgres' | 'mssql' | 'sqlite'
 
@@ -42,6 +43,11 @@ export interface Config {
   instanceId: string
   ticketRatePerMinute: number
   ticketRatePerDevice: number
+  /** false, true o cantidad de proxies delante (recomendado: 1 con Caddy). */
+  trustProxy: boolean | number
+  version: string
+  wsMaxClients: number
+  wsMaxPerIp: number
 }
 
 const bool = (v: string | undefined, d: boolean) =>
@@ -52,6 +58,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const raw = (env.DB_CLIENT ?? 'postgres').toLowerCase()
   const client: DbClient = raw === 'mssql' ? 'mssql' : raw === 'sqlite' ? 'sqlite' : 'postgres'
   const root = fileURLToPath(new URL('../..', import.meta.url))
+  let version = '0.0.0'
+  try { version = JSON.parse(readFileSync(`${root}package.json`, 'utf8')).version ?? version } catch { /* sin package.json */ }
 
   let sessionSecret = env.SESSION_SECRET?.trim() || ''
   if (!sessionSecret) {
@@ -116,5 +124,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     instanceId: env.INSTANCE_ID || `app-${process.pid}`,
     ticketRatePerMinute: Number(env.TICKET_RATE_PER_MIN ?? 120),
     ticketRatePerDevice: Number(env.TICKET_RATE_PER_DEVICE ?? 30),
+    trustProxy: /^\d+$/.test(env.TRUST_PROXY ?? '') ? Number(env.TRUST_PROXY) : bool(env.TRUST_PROXY, false),
+    version,
+    wsMaxClients: Number(env.WS_MAX_CLIENTS ?? 2000),
+    wsMaxPerIp: Number(env.WS_MAX_PER_IP ?? 60),
   }
 }

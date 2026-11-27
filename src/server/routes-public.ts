@@ -1,67 +1,58 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { loadUser, openSession } from './auth.js'
+import { closeOtherSessions, closeSession, loadUser, openSession } from './auth.js'
 import type { Ctx } from './db.js'
-import { insertId, nowIso } from './db.js'
+import { businessDate, insertId, nowIso } from './db.js'
 import { HttpError } from './errors.js'
-import { createTicket, tvState } from './queue.js'
-import { RateLimiter, hashPassword, verifyPassword } from './security.js'
+import { createTicket, ticketStatus, tvState } from './queue.js'
+import { RateLimiter, getDummyHash, hashPassword, safeEqual, verifyPassword } from './security.js'
 import { getSettings, publicSettings } from './settings.js'
 import { audit } from './audit.js'
 
-const ticketLimiter = new RateLimiter()
-const pinLimiter = new RateLimiter()
+const LOGIN_MAX_PER_USER = 8
+const LOGIN_MAX_PER_IP = 30
+const LOGIN_WINDOW_MS = 15 * 60_000
 
 export function publicRoutes(app: FastifyInstance, ctx: Ctx) {
-  app.get('/api/health', async () => {
+  const ticketLimiter = new RateLimiter(ctx.hub.counters, 'ticket')
+  const pinLimiter = new RateLimiter(ctx.hub.counters, 'pin')
+  const loginLimiter = new RateLimiter(ctx.hub.counters, 'login')
+  const reprintLimiter = new RateLimiter(ctx.hub.counters, 'reprint')
+
+  app.get('/api/health', async (req, reply) => {
     const t0 = Date.now()
-    let dbOk = false
-    let dbError: string | undefined
+    let dbOk = true
     try {
       await ctx.db.selectFrom('settings').select('setting_key').limit(1).execute()
-      dbOk = true
     } catch (e) {
-      dbError = (e as Error).message
+      dbOk = false
+      req.log.error({ err: e }, 'health: base de datos no disponible')
     }
-    const hubMode = (ctx.hub as any).mode ?? 'memory'
-    return {
-      ok: dbOk,
-      db: ctx.client,
-      dbLatencyMs: Date.now() - t0,
-      dbError,
-      hub: hubMode,
-      instanceId: ctx.cfg.instanceId,
-      wsClients: ctx.hub.size,
-      uptimeSec: Math.round(process.uptime()),
-      version: '1.2.0',
-    }
+    if (!dbOk) reply.code(503)
+    return { ok: dbOk, dbLatencyMs: Date.now() - t0, version: ctx.cfg.version }
   })
 
-  app.get('/api/openapi.json', async () => ({
-    openapi: '3.0.3',
-    info: { title: 'CELTTO-TOTEMS API', version: '1.1.0' },
-    paths: {
-      '/api/health': { get: { summary: 'Healthcheck' } },
-      '/api/public/tickets': { post: { summary: 'Crear turno desde tótem' } },
-      '/api/public/tv': { get: { summary: 'Estado de pantalla TV' } },
-      '/api/public/stations/bind': { post: { summary: 'Vincular tótem o TV a secretaría' } },
-      '/api/admin/stats': { get: { summary: 'Estadísticas y reportes' } },
-    },
-  }))
+  app.get('/api/public/version', async () => ({ version: ctx.cfg.version }))
 
   app.post('/api/auth/login', async (req, reply) => {
-    const body = z.object({ username: z.string().min(1), password: z.string().min(1) }).parse(req.body)
-    const user = await ctx.db
-      .selectFrom('users')
-      .selectAll()
-      .where('username', '=', body.username.toLowerCase())
-      .where('active', '=', 1)
-      .executeTakeFirst()
-    if (!user || !(await verifyPassword(body.password, user.password_hash))) {
-      await audit(ctx, { action: 'login.fail', detail: { username: body.username }, ip: req.ip })
+    const body = z.object({ username: z.string().trim().min(1).max(60), password: z.string().min(1).max(200) }).parse(req.body)
+    const username = body.username.toLowerCase()
+    const okUser = await loginLimiter.hit(`u:${username}`, LOGIN_MAX_PER_USER, LOGIN_WINDOW_MS)
+    const okIp = await loginLimiter.hit(`ip:${req.ip}`, LOGIN_MAX_PER_IP, LOGIN_WINDOW_MS)
+    if (!okUser || !okIp) {
+      await audit(ctx, { action: 'login.blocked', detail: { username }, ip: req.ip })
+      throw new HttpError(429, 'Demasiados intentos. Esperá 15 minutos o pedile al administrador que revise tu usuario.')
+    }
+    const user = await ctx.db.selectFrom('users').selectAll().where('username', '=', username).where('active', '=', 1).executeTakeFirst()
+    // Siempre se verifica un hash (aunque el usuario no exista) para no revelar qué usuarios existen por el tiempo de respuesta
+    const valid = await verifyPassword(body.password, user?.password_hash ?? (await getDummyHash()))
+    if (!user || !valid) {
+      await audit(ctx, { action: 'login.fail', detail: { username }, ip: req.ip })
       throw new HttpError(401, 'Usuario o contraseña incorrectos')
     }
+    await loginLimiter.reset(`u:${username}`)
     await openSession(ctx, reply, user.id)
+    await ctx.db.updateTable('users').set({ last_login_at: nowIso() }).where('id', '=', user.id).execute()
     await audit(ctx, { userId: user.id, action: 'login.ok', ip: req.ip })
     return {
       id: user.id,
@@ -76,7 +67,7 @@ export function publicRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.post('/api/auth/logout', async (req, reply) => {
     const u = await loadUser(ctx, req)
-    reply.clearCookie('sid', { path: '/' })
+    await closeSession(ctx, req, reply)
     if (u) await audit(ctx, { userId: u.id, action: 'logout', ip: req.ip })
     return { ok: true }
   })
@@ -90,12 +81,14 @@ export function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   app.put('/api/auth/password', async (req) => {
     const u = await loadUser(ctx, req)
     if (!u) throw new HttpError(401, 'Sin sesión')
-    const { current, next } = z
-      .object({ current: z.string().min(1), next: z.string().min(8).max(200) })
-      .parse(req.body)
+    const { current, next } = z.object({ current: z.string().min(1).max(200), next: z.string().min(8, 'La contraseña nueva debe tener al menos 8 caracteres').max(200) }).parse(req.body)
+    if (!(await loginLimiter.hit(`pw:${u.id}`, 5, LOGIN_WINDOW_MS))) throw new HttpError(429, 'Demasiados intentos. Esperá unos minutos.')
     const row = await ctx.db.selectFrom('users').select('password_hash').where('id', '=', u.id).executeTakeFirstOrThrow()
     if (!(await verifyPassword(current, row.password_hash))) throw new HttpError(400, 'La contraseña actual no es correcta')
     await ctx.db.updateTable('users').set({ password_hash: await hashPassword(next) }).where('id', '=', u.id).execute()
+    // Al cambiar la clave se cierran las demás sesiones abiertas (otras PCs / celulares)
+    await closeOtherSessions(ctx, u.id, req.cookies?.sid)
+    await audit(ctx, { userId: u.id, action: 'password.change', ip: req.ip })
     return { ok: true }
   })
 
@@ -104,15 +97,19 @@ export function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     const buttons = await ctx.db
       .selectFrom('buttons')
       .innerJoin('sectors as t', 't.id', 'buttons.target_sector_id')
+      .leftJoin('priorities as p', 'p.id', 'buttons.priority_id')
       .selectAll('buttons')
+      .select(['p.name as priority_name', 'p.color as priority_color'])
       .where('buttons.active', '=', 1)
       .where('t.active', '=', 1)
       .orderBy('buttons.sort_order')
       .orderBy('buttons.id')
       .execute()
     const s = await getSettings(ctx)
+    const logo = await ctx.db.selectFrom('assets').select('updated_at').where('asset_key', '=', 'logo').executeTakeFirst()
     return {
       settings: publicSettings(s),
+      logoVersion: logo?.updated_at ?? null,
       sectors: sectors.map((x) => ({
         id: x.id,
         name: x.name,
@@ -125,61 +122,64 @@ export function publicRoutes(app: FastifyInstance, ctx: Ctx) {
             label: b.label,
             subtitle: b.subtitle,
             color: b.color ?? x.color,
-            priorityId: b.priority_id,
+            icon: b.icon,
+            priorityName: b.priority > 0 ? b.priority_name : null,
             priority: b.priority,
           })),
       })),
     }
   })
 
-  app.post('/api/public/tickets', async (req) => {
-    const body = z.object({
-      buttonId: z.number().int().positive(),
-      deviceKey: z.string().min(4).max(64).optional(),
-      dni: z.string().trim().max(20).optional(),
-    }).parse(req.body)
-    const ipKey = `ip:${req.ip}`
-    if (!ticketLimiter.hit(ipKey, ctx.cfg.ticketRatePerMinute, 60_000)) {
-      throw new HttpError(429, 'Demasiados turnos desde esta red. Esperá un momento.')
-    }
-    if (body.deviceKey) {
-      const devKey = `dev:${body.deviceKey}`
-      if (!ticketLimiter.hit(devKey, ctx.cfg.ticketRatePerDevice, 60_000)) {
-        throw new HttpError(429, 'Este tótem emitió demasiados turnos. Esperá un momento.')
-      }
-    }
-    return createTicket(ctx, body.buttonId)
+  app.get('/api/public/logo', async (_req, reply) => {
+    const a = await ctx.db.selectFrom('assets').selectAll().where('asset_key', '=', 'logo').executeTakeFirst()
+    if (!a) throw new HttpError(404, 'Sin logo')
+    reply.header('Content-Type', a.mime)
+    reply.header('Cache-Control', 'public, max-age=300')
+    reply.header('Content-Security-Policy', "default-src 'none'")
+    return Buffer.from(a.data, 'base64')
   })
 
+  app.post('/api/public/tickets', async (req) => {
+    const body = z
+      .object({
+        buttonId: z.number().int().positive(),
+        deviceKey: z.string().min(4).max(64).optional(),
+        dni: z.string().trim().max(20).regex(/^[\d.\s-]*$/, 'El documento solo puede tener números').optional(),
+      })
+      .parse(req.body)
+    if (!(await ticketLimiter.hit(`ip:${req.ip}`, ctx.cfg.ticketRatePerMinute, 60_000))) {
+      throw new HttpError(429, 'Demasiados turnos desde esta red. Esperá un momento.')
+    }
+    if (body.deviceKey && !(await ticketLimiter.hit(`dev:${body.deviceKey}`, ctx.cfg.ticketRatePerDevice, 60_000))) {
+      throw new HttpError(429, 'Este tótem emitió demasiados turnos. Esperá un momento.')
+    }
+    return createTicket(ctx, body.buttonId, body.dni)
+  })
+
+  // Reimpresión: solo turnos de hoy, con límite, para que no se pueda recorrer el historial
   app.post('/api/public/tickets/:id/reprint', async (req) => {
     const id = z.coerce.number().int().positive().parse((req.params as any).id)
-    const t = await ctx.db.selectFrom('tickets').selectAll().where('id', '=', id).executeTakeFirst()
-    if (!t) throw new HttpError(404, 'Turno no encontrado')
-    await ctx.db
-      .updateTable('tickets')
-      .set({ print_count: (t.print_count ?? 0) + 1 })
+    if (!(await reprintLimiter.hit(req.ip, 20, 60_000))) throw new HttpError(429, 'Demasiadas reimpresiones. Esperá un momento.')
+    const t = await ctx.db
+      .selectFrom('tickets')
+      .selectAll()
       .where('id', '=', id)
-      .execute()
-    const sector = await ctx.db.selectFrom('sectors').select(['name', 'color']).where('id', '=', t.sector_id).executeTakeFirst()
-    const settings = await getSettings(ctx)
-    return {
-      id: t.id,
-      code: t.code,
-      sectorName: sector?.name,
-      color: sector?.color,
-      footer: settings.ticket_footer,
-      printCount: (t.print_count ?? 0) + 1,
-      createdAt: t.created_at,
-    }
+      .where('business_date', '=', businessDate(ctx.cfg.timezone))
+      .where('status', 'in', ['waiting', 'called', 'serving'])
+      .executeTakeFirst()
+    if (!t) throw new HttpError(404, 'Turno no encontrado')
+    await ctx.db.updateTable('tickets').set({ print_count: (t.print_count ?? 0) + 1 }).where('id', '=', id).execute()
+    return { id: t.id, code: t.code, printCount: (t.print_count ?? 0) + 1 }
   })
 
   app.post('/api/public/totem-pin', async (req) => {
-    if (!pinLimiter.hit(req.ip, 10, 5 * 60_000)) throw new HttpError(429, 'Demasiados intentos')
+    if (!(await pinLimiter.hit(req.ip, 10, 5 * 60_000))) throw new HttpError(429, 'Demasiados intentos. Esperá 5 minutos.')
     const { pin } = z.object({ pin: z.string().max(12) }).parse(req.body)
-    return { ok: pin === (await getSettings(ctx)).totem_pin }
+    return { ok: safeEqual(pin, (await getSettings(ctx)).totem_pin) }
   })
 
   app.post('/api/public/stations/bind', async (req) => {
+    if (!(await pinLimiter.hit(req.ip, 10, 5 * 60_000))) throw new HttpError(429, 'Demasiados intentos. Esperá 5 minutos.')
     const b = z
       .object({
         kind: z.enum(['totem', 'tv']),
@@ -190,41 +190,36 @@ export function publicRoutes(app: FastifyInstance, ctx: Ctx) {
       })
       .parse(req.body)
     const settings = await getSettings(ctx)
-    if (b.pin !== settings.totem_pin) throw new HttpError(403, 'PIN incorrecto')
-    const sector = await ctx.db
-      .selectFrom('sectors')
-      .select(['id', 'name'])
-      .where('id', '=', b.sectorId)
-      .where('active', '=', 1)
-      .executeTakeFirst()
+    if (!safeEqual(b.pin, settings.totem_pin)) {
+      await audit(ctx, { action: 'station.bind.fail', ip: req.ip })
+      throw new HttpError(403, 'PIN incorrecto')
+    }
+    const sector = await ctx.db.selectFrom('sectors').select(['id', 'name']).where('id', '=', b.sectorId).where('active', '=', 1).executeTakeFirst()
     if (!sector) throw new HttpError(404, 'Secretaría no encontrada')
     const existing = await ctx.db.selectFrom('stations').selectAll().where('device_key', '=', b.deviceKey).executeTakeFirst()
+    let id: number
     if (existing) {
       await ctx.db
         .updateTable('stations')
-        .set({
-          sector_id: b.sectorId,
-          kind: b.kind,
-          name: b.name ?? existing.name,
-          last_seen_at: nowIso(),
-          active: 1,
-        })
+        .set({ sector_id: b.sectorId, kind: b.kind, name: b.name ?? existing.name, last_seen_at: nowIso(), active: 1 })
         .where('id', '=', existing.id)
         .execute()
-      ctx.hub.broadcast({ type: 'config' })
-      return { id: existing.id, deviceKey: existing.device_key, sectorId: b.sectorId, sectorName: sector.name }
+      id = existing.id
+    } else {
+      id = await insertId(ctx, ctx.db, 'stations', {
+        kind: b.kind,
+        name: b.name ?? `${b.kind}-${sector.name}`,
+        sector_id: b.sectorId,
+        device_key: b.deviceKey,
+        active: 1,
+        last_seen_at: nowIso(),
+        lang: null,
+        created_at: nowIso(),
+      })
     }
-    const id = await insertId(ctx, ctx.db, 'stations', {
-      kind: b.kind,
-      name: b.name ?? `${b.kind}-${sector.name}`,
-      sector_id: b.sectorId,
-      device_key: b.deviceKey,
-      active: 1,
-      last_seen_at: nowIso(),
-      created_at: nowIso(),
-    })
+    await audit(ctx, { action: 'station.bind', entity: 'station', entityId: id, ip: req.ip })
     ctx.hub.broadcast({ type: 'config' })
-    return { id, deviceKey: b.deviceKey, sectorId: b.sectorId, sectorName: sector.name }
+    return { id, sectorId: b.sectorId, sectorName: sector.name }
   })
 
   app.get('/api/public/stations/:deviceKey', async (req) => {
@@ -232,141 +227,33 @@ export function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     const st = await ctx.db
       .selectFrom('stations')
       .leftJoin('sectors', 'sectors.id', 'stations.sector_id')
-      .select([
-        'stations.id',
-        'stations.kind',
-        'stations.name',
-        'stations.sector_id',
-        'stations.device_key',
-        'stations.active',
-        'sectors.name as sector_name',
-        'sectors.color as sector_color',
-      ])
+      .select(['stations.id', 'stations.kind', 'stations.name', 'stations.sector_id', 'stations.lang', 'sectors.name as sector_name', 'sectors.color as sector_color'])
       .where('stations.device_key', '=', deviceKey)
       .where('stations.active', '=', 1)
       .executeTakeFirst()
     if (!st) throw new HttpError(404, 'Estación no registrada')
     await ctx.db.updateTable('stations').set({ last_seen_at: nowIso() }).where('id', '=', st.id).execute()
-    return {
-      id: st.id,
-      kind: st.kind,
-      name: st.name,
-      sectorId: st.sector_id,
-      sectorName: st.sector_name,
-      sectorColor: st.sector_color,
-      deviceKey: st.device_key,
-    }
+    return { id: st.id, kind: st.kind, name: st.name, sectorId: st.sector_id, sectorName: st.sector_name, sectorColor: st.sector_color, lang: st.lang }
   })
 
   app.get('/api/public/tv', async (req) => {
-    const q = req.query as any
+    const q = req.query as Record<string, unknown>
     let ids = String(q?.sectors ?? '')
       .split(',')
       .map(Number)
       .filter((n) => Number.isInteger(n) && n > 0)
-    const deviceKey = q?.deviceKey ? String(q.deviceKey) : ''
+      .slice(0, 50)
+    const deviceKey = typeof q?.deviceKey === 'string' ? q.deviceKey.slice(0, 64) : ''
     if (deviceKey) {
-      const st = await ctx.db
-        .selectFrom('stations')
-        .select(['sector_id', 'kind'])
-        .where('device_key', '=', deviceKey)
-        .where('active', '=', 1)
-        .executeTakeFirst()
+      const st = await ctx.db.selectFrom('stations').select(['id', 'sector_id', 'kind']).where('device_key', '=', deviceKey).where('active', '=', 1).executeTakeFirst()
       if (st?.kind === 'tv' && st.sector_id) ids = [st.sector_id]
-      if (st) await ctx.db.updateTable('stations').set({ last_seen_at: nowIso() }).where('device_key', '=', deviceKey).execute()
+      if (st) await ctx.db.updateTable('stations').set({ last_seen_at: nowIso() }).where('id', '=', st.id).execute()
     }
     return tvState(ctx, ids)
   })
-}
 
   app.get('/api/public/ticket/:code', async (req) => {
-    const code = z.string().min(1).max(12).parse((req.params as any).code).toUpperCase()
-    const date = (await import('./db.js')).businessDate(ctx.cfg.timezone)
-    const t = await ctx.db
-      .selectFrom('tickets')
-      .innerJoin('sectors', 'sectors.id', 'tickets.sector_id')
-      .leftJoin('buttons', 'buttons.id', 'tickets.button_id')
-      .select([
-        'tickets.id',
-        'tickets.code',
-        'tickets.status',
-        'tickets.created_at',
-        'tickets.called_at',
-        'tickets.desk',
-        'tickets.sector_id',
-        'sectors.name as sector_name',
-        'sectors.color as sector_color',
-        'buttons.label as button_label',
-      ])
-      .where('tickets.code', '=', code)
-      .where('tickets.business_date', '=', date)
-      .executeTakeFirst()
-    if (!t) throw new HttpError(404, 'Turno no encontrado para hoy')
-    const ahead = await ctx.db
-      .selectFrom('tickets')
-      .select((eb) => eb.fn.countAll<number>().as('n'))
-      .where('sector_id', '=', t.sector_id)
-      .where('business_date', '=', date)
-      .where('status', '=', 'waiting')
-      .where('id', '<', t.id)
-      .executeTakeFirst()
-    const settings = await getSettings(ctx)
-    let estimatedWaitMin: number | null = null
-    if (settings.wait_estimate_enabled && t.status === 'waiting') {
-      estimatedWaitMin = Math.max(1, Number(ahead?.n ?? 0) * 3)
-    }
-    return {
-      code: t.code,
-      status: t.status,
-      sectorName: t.sector_name,
-      sectorColor: t.sector_color,
-      desk: t.desk,
-      buttonLabel: t.button_label,
-      waitingAhead: Number(ahead?.n ?? 0),
-      estimatedWaitMin,
-      calledAt: t.called_at,
-      createdAt: t.created_at,
-      place: t.desk ? `${t.sector_name}, ${t.desk}` : t.sector_name,
-      message:
-        t.status === 'called' || t.status === 'serving'
-          ? `Dirigite a ${t.desk ? `${t.sector_name} · ${t.desk}` : t.sector_name}`
-          : t.status === 'waiting'
-            ? 'Aguarde su llamado'
-            : 'Este turno ya finalizó',
-    }
+    const code = z.string().min(1).max(12).regex(/^[A-Za-z0-9-]+$/).parse((req.params as any).code).toUpperCase()
+    return ticketStatus(ctx, code)
   })
-
-  app.get('/api/public/ops-alerts', async () => {
-    const settings = await getSettings(ctx)
-    const date = (await import('./db.js')).businessDate(ctx.cfg.timezone)
-    const rows = await ctx.db
-      .selectFrom('tickets')
-      .innerJoin('sectors', 'sectors.id', 'tickets.sector_id')
-      .select(['sectors.id', 'sectors.name', 'sectors.color'])
-      .select((eb) => eb.fn.countAll<number>().as('waiting'))
-      .where('tickets.business_date', '=', date)
-      .where('tickets.status', 'in', ['waiting', 'called', 'serving'])
-      .groupBy(['sectors.id', 'sectors.name', 'sectors.color'])
-      .execute()
-    const alerts = []
-    for (const r of rows) {
-      const w = Number(r.waiting)
-      if (w >= settings.alert_queue_waiting) {
-        alerts.push({ type: 'queue_high', sectorId: r.id, sectorName: r.name, waiting: w, threshold: settings.alert_queue_waiting })
-      }
-    }
-    const staleStations = await ctx.db
-      .selectFrom('stations')
-      .selectAll()
-      .where('active', '=', 1)
-      .execute()
-    const now = Date.now()
-    for (const s of staleStations) {
-      if (!s.last_seen_at) continue
-      const age = now - Date.parse(s.last_seen_at)
-      if (age > 15 * 60_000) {
-        alerts.push({ type: 'station_stale', stationId: s.id, name: s.name, kind: s.kind, lastSeenAt: s.last_seen_at })
-      }
-    }
-    return { alerts, at: new Date().toISOString() }
-  })
+}

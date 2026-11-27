@@ -1,4 +1,4 @@
-import { MssqlAdapter, PostgresAdapter, type Kysely } from 'kysely'
+import { MssqlAdapter, PostgresAdapter, sql, type Kysely } from 'kysely'
 import type { Migration } from 'kysely/migration'
 
 function pkId(db: Kysely<any>) {
@@ -10,6 +10,16 @@ function pkId(db: Kysely<any>) {
     return (c: any) => c.generatedByDefaultAsIdentity().primaryKey().notNull()
   }
   return (c: any) => c.primaryKey().autoIncrement().notNull()
+}
+
+/** Texto largo portable: text en Postgres/SQLite, nvarchar(max) en SQL Server. */
+function bigText(db: Kysely<any>) {
+  return db.getExecutor().adapter instanceof MssqlAdapter ? sql`nvarchar(max)` : sql`text`
+}
+
+const supportsAlterFk = (db: Kysely<any>) => {
+  const a = db.getExecutor().adapter
+  return a instanceof PostgresAdapter || a instanceof MssqlAdapter
 }
 
 export const migrations: Record<string, Migration> = {
@@ -182,6 +192,51 @@ export const migrations: Record<string, Migration> = {
           { name: 'Urgente', weight: 20, color: '#dc2626', sort_order: 3, active: 1 },
         ])
         .execute()
+    },
+  },
+
+  '003_hardening': {
+    async up(db: Kysely<any>) {
+      await db.schema.alterTable('tickets').addColumn('dni', 'varchar(20)').execute()
+      await db.schema.alterTable('users').addColumn('last_login_at', 'varchar(30)').execute()
+      await db.schema.alterTable('stations').addColumn('lang', 'varchar(5)').execute()
+      await db.schema.alterTable('buttons').addColumn('icon', 'varchar(40)').execute()
+
+      await db.schema
+        .createTable('assets')
+        .addColumn('asset_key', 'varchar(40)', (c) => c.primaryKey().notNull())
+        .addColumn('mime', 'varchar(40)', (c) => c.notNull())
+        .addColumn('data', bigText(db), (c) => c.notNull())
+        .addColumn('updated_at', 'varchar(30)', (c) => c.notNull())
+        .execute()
+
+      await db.schema.createIndex('ix_sessions_user').on('sessions').column('user_id').execute()
+      await db.schema.createIndex('ix_sessions_expires').on('sessions').column('expires_at').execute()
+      await db.schema.createIndex('ix_events_ticket').on('ticket_events').column('ticket_id').execute()
+      await db.schema.createIndex('ix_tickets_lastcall').on('tickets').columns(['business_date', 'last_call_at']).execute()
+      await db.schema.createIndex('ix_tickets_calledby').on('tickets').columns(['called_by', 'status']).execute()
+
+      if (supportsAlterFk(db)) {
+        // Limpiar referencias huérfanas antes de crear las claves foráneas
+        await sql`UPDATE buttons SET priority_id = NULL WHERE priority_id IS NOT NULL AND priority_id NOT IN (SELECT id FROM priorities)`.execute(db)
+        await sql`UPDATE tickets SET priority_id = NULL WHERE priority_id IS NOT NULL AND priority_id NOT IN (SELECT id FROM priorities)`.execute(db)
+        await sql`UPDATE users SET desk_id = NULL WHERE desk_id IS NOT NULL AND desk_id NOT IN (SELECT id FROM desks)`.execute(db)
+        await sql`UPDATE tickets SET desk_id = NULL WHERE desk_id IS NOT NULL AND desk_id NOT IN (SELECT id FROM desks)`.execute(db)
+        await db.schema.alterTable('buttons').addForeignKeyConstraint('fk_buttons_priority', ['priority_id'], 'priorities', ['id']).execute()
+        await db.schema.alterTable('tickets').addForeignKeyConstraint('fk_tickets_priority', ['priority_id'], 'priorities', ['id']).execute()
+        await db.schema.alterTable('users').addForeignKeyConstraint('fk_users_desk', ['desk_id'], 'desks', ['id']).execute()
+        await db.schema.alterTable('tickets').addForeignKeyConstraint('fk_tickets_desk', ['desk_id'], 'desks', ['id']).execute()
+      }
+
+      // Unificar prioridades: los botones con prioridad numérica pasan a usar la tabla de prioridades
+      const prios = await db.selectFrom('priorities').select(['id', 'weight']).orderBy('weight').execute()
+      if (prios.length) {
+        const byLevel = (lvl: number) => prios[Math.min(lvl, prios.length - 1)]
+        for (const lvl of [0, 1, 2]) {
+          const p = byLevel(lvl)
+          await db.updateTable('buttons').set({ priority_id: p.id, priority: p.weight }).where('priority_id', 'is', null).where('priority', '=', lvl).execute()
+        }
+      }
     },
   },
 }

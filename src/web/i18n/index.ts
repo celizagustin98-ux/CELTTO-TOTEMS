@@ -14,7 +14,12 @@ export const SUPPORTED_LANGS = [
 
 export type LangCode = (typeof SUPPORTED_LANGS)[number]['code']
 
-const stored = typeof localStorage !== 'undefined' ? localStorage.getItem('celtto.lang') : null
+let stored: string | null = null
+try {
+  stored = localStorage.getItem('celtto.lang')
+} catch {
+  /* sin almacenamiento */
+}
 const initial = (SUPPORTED_LANGS.some((l) => l.code === stored) ? stored : 'es') as LangCode
 
 void i18n.use(initReactI18next).init({
@@ -29,11 +34,17 @@ void i18n.use(initReactI18next).init({
   interpolation: { escapeValue: false },
 })
 
-export function setAppLanguage(code: LangCode) {
-  localStorage.setItem('celtto.lang', code)
+export function setAppLanguage(code: LangCode, persist = true) {
+  try {
+    if (persist) localStorage.setItem('celtto.lang', code)
+  } catch {
+    /* sin almacenamiento */
+  }
   void i18n.changeLanguage(code)
   document.documentElement.lang = code
 }
+
+export const isLang = (c: unknown): c is LangCode => SUPPORTED_LANGS.some((l) => l.code === c)
 
 export function voiceLangFor(code?: string): string[] {
   const lang = SUPPORTED_LANGS.find((l) => l.code === (code || i18n.language))
