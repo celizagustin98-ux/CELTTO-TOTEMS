@@ -45,6 +45,13 @@ export interface Config {
   ticketRatePerDevice: number
   /** false, true o cantidad de proxies delante (recomendado: 1 con Caddy). */
   trustProxy: boolean | number
+  /** Clave maestra para cifrar datos personales (DNI, doble factor). */
+  dataKey: string
+  /** Carpeta de archivos de publicidad (imágenes y videos). */
+  mediaDir: string
+  /** Carpeta donde el servicio de respaldo deja su estado (solo lectura para la app). */
+  backupDir: string
+  metricsToken?: string
   version: string
   wsMaxClients: number
   wsMaxPerIp: number
@@ -71,6 +78,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (isProd && sessionSecret.length < 32) {
     throw new Error('SESSION_SECRET debe tener al menos 32 caracteres en producción.')
   }
+
+  let dataKey = env.DATA_KEY?.trim() || ''
+  if (!dataKey) {
+    if (isProd) throw new Error('DATA_KEY es obligatoria en producción (cadena aleatoria de 32+ caracteres). Guardala junto con los respaldos.')
+    dataKey = 'celtto-dev-only-key-not-for-production'
+  }
+  if (isProd && dataKey.length < 32) throw new Error('DATA_KEY debe tener al menos 32 caracteres en producción.')
 
   const pgPassword = env.POSTGRES_PASSWORD ?? env.PGPASSWORD ?? ''
   const mssqlPassword = env.MSSQL_PASSWORD ?? ''
@@ -126,6 +140,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ticketRatePerDevice: Number(env.TICKET_RATE_PER_DEVICE ?? 30),
     trustProxy: /^\d+$/.test(env.TRUST_PROXY ?? '') ? Number(env.TRUST_PROXY) : bool(env.TRUST_PROXY, false),
     version,
+    dataKey,
+    mediaDir: env.MEDIA_DIR || `${root}data/media`,
+    backupDir: env.BACKUP_DIR || `${root}data/backups`,
+    metricsToken: env.METRICS_TOKEN || undefined,
     wsMaxClients: Number(env.WS_MAX_CLIENTS ?? 2000),
     wsMaxPerIp: Number(env.WS_MAX_PER_IP ?? 60),
   }

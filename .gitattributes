@@ -1,0 +1,5 @@
+# Los scripts corren en Linux (contenedores): siempre con fin de línea LF
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+Caddyfile text eol=lf

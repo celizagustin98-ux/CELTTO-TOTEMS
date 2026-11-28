@@ -21,9 +21,17 @@ services:
       - -c
       - max_connections=200
       - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=mkdir -p /backups/wal && test ! -f /backups/wal/%f && cp %p /backups/wal/%f
+      - -c
       - shared_buffers=256MB
     volumes:
       - celtto_pgdata:/var/lib/postgresql/data
+      - celtto_backups:/backups
+      - ./pg-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
@@ -49,6 +57,9 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+    volumes:
+      - celtto_media:/app/data/media
+      - celtto_backups:/backups:ro
     depends_on:
       db:
         condition: service_healthy
@@ -56,6 +67,10 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: production
+      DATA_KEY: ${DATA_KEY:?Definí DATA_KEY en .env (32+ caracteres, guardala junto con los respaldos)}
+      MEDIA_DIR: /app/data/media
+      BACKUP_DIR: /backups
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
       TRUST_PROXY: "1"
       PORT: 8080
       HOST: 0.0.0.0
@@ -95,9 +110,33 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
     networks: [celtto]
 
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-celtto}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DATABASE:-celtto_totems}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      BACKUP_HOUR: ${BACKUP_HOUR:-02}
+      TZ: ${APP_TIMEZONE:-America/Argentina/Cordoba}
+    entrypoint: ["sh", "/scripts/backup.sh"]
+    volumes:
+      - celtto_backups:/backups
+      - ./scripts/backup.sh:/scripts/backup.sh:ro
+      - ./scripts/restore.sh:/scripts/restore.sh:ro
+    networks: [celtto]
+
 networks:
   celtto:
     driver: bridge
 
 volumes:
   celtto_pgdata:
+  celtto_media:
+  celtto_backups:

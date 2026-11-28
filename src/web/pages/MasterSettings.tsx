@@ -23,7 +23,28 @@ const readDataUrl = (f: File) =>
     r.readAsDataURL(f)
   })
 
-type MediaItem = { key: string; url: string; mime: string; uploadedAt: string }
+type MediaItem = { id: number; key: string; url: string; kind: 'image' | 'video'; mime: string; size: number; name: string | null }
+const MEDIA_ACCEPT = 'image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm'
+const ROLE_OPTS: { v: Settings['mfa_required_roles'][number]; l: string }[] = [
+  { v: 'owner', l: 'Control maestro' }, { v: 'admin', l: 'Administradores' }, { v: 'supervisor', l: 'Supervisores' },
+  { v: 'tech', l: 'Técnicos' }, { v: 'auditor', l: 'Auditores' }, { v: 'secretary', l: 'Secretarias' },
+]
+
+/** Sube un archivo crudo (sin base64) mostrando el progreso: los videos pueden pesar cientos de MB. */
+function uploadRaw(file: File, onProgress: (pct: number) => void) {
+  return new Promise<void>((resolve, reject) => {
+    const x = new XMLHttpRequest()
+    x.open('POST', `/api/admin/media?name=${encodeURIComponent(file.name)}`)
+    x.setRequestHeader('Content-Type', file.type)
+    x.upload.onprogress = (e) => e.lengthComputable && onProgress(Math.round((e.loaded / e.total) * 100))
+    x.onload = () => {
+      if (x.status >= 200 && x.status < 300) return resolve()
+      try { reject(new Error(JSON.parse(x.responseText).error)) } catch { reject(new Error('No se pudo subir el archivo')) }
+    }
+    x.onerror = () => reject(new Error('Sin conexión con el servidor'))
+    x.send(file)
+  })
+}
 
 function Section({ title, hint, children, id }: { title: string; hint?: string; children: ReactNode; id?: string }) {
   return (
@@ -43,7 +64,7 @@ export default function SettingsPage() {
   const brand = useLoad(() => api<{ logoVersion: string | null }>('/api/public/sectors'))
   const media = useLoad(() => api<MediaItem[]>('/api/admin/media'))
   const mediaFile = useRef<HTMLInputElement>(null)
-  const [uploading, setUploading] = useState(false)
+  const [uploading, setUploading] = useState<{ name: string; pct: number } | null>(null)
   const [s, setS] = useState<Settings | null>(null)
   const [saved, setSaved] = useState<string>('')
   const [busy, setBusy] = useState(false)
@@ -109,12 +130,13 @@ export default function SettingsPage() {
     }
   }
   const uploadMedia = async (files: FileList) => {
-    setUploading(true)
     try {
       for (const f of Array.from(files)) {
-        if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(f.type)) { toast(`${f.name}: tiene que ser PNG, JPG, WEBP o GIF`, 'error'); continue }
-        if (f.size > 2_000_000) { toast(`${f.name}: supera los 2 MB`, 'error'); continue }
-        await api('/api/admin/media', { body: { dataUrl: await readDataUrl(f) } })
+        if (!MEDIA_ACCEPT.split(',').includes(f.type)) { toast(`${f.name}: formato no permitido (PNG, JPG, WEBP, GIF, MP4 o WEBM)`, 'error'); continue }
+        const max = f.type.startsWith('video/') ? 200_000_000 : 5_000_000
+        if (f.size > max) { toast(`${f.name}: supera ${max / 1_000_000} MB`, 'error'); continue }
+        setUploading({ name: f.name, pct: 0 })
+        await uploadRaw(f, (pct) => setUploading({ name: f.name, pct }))
       }
       await media.reload()
       if (!s?.tv_media_enabled) set('tv_media_enabled', true)
@@ -122,14 +144,24 @@ export default function SettingsPage() {
     } catch (e) {
       toast((e as Error).message, 'error')
     } finally {
-      setUploading(false)
+      setUploading(null)
       if (mediaFile.current) mediaFile.current.value = ''
     }
   }
   const removeMedia = async (m: MediaItem) => {
-    await api(`/api/admin/media/${m.key}`, { method: 'DELETE' })
+    if (!(await confirm({ title: 'Eliminar de la publicidad', message: `Se deja de mostrar ${m.kind === 'video' ? 'el video' : 'la imagen'} en la TV.`, confirmLabel: 'Eliminar', danger: true }))) return
+    await api(`/api/admin/media/${m.id}`, { method: 'DELETE' })
     await media.reload()
-    toast('Imagen eliminada')
+    toast('Eliminado')
+  }
+  const moveMedia = async (m: MediaItem, dir: -1 | 1) => {
+    const list = [...(media.data ?? [])]
+    const i = list.findIndex((x) => x.id === m.id)
+    const j = i + dir
+    if (j < 0 || j >= list.length) return
+    ;[list[i], list[j]] = [list[j], list[i]]
+    media.setData(list)
+    await api('/api/admin/media/order', { method: 'PUT', body: { ids: list.map((x) => x.id) } })
   }
   const removeLogo = async () => {
     if (!(await confirm({ title: 'Quitar logo', message: 'Se vuelve a mostrar el isotipo de CELTTO.', confirmLabel: 'Quitar', danger: true }))) return
@@ -195,16 +227,20 @@ export default function SettingsPage() {
         </Field>
       </Section>
 
-      <Section title="Publicidad en la TV" hint="Imágenes que rotan en el recuadro de publicidad del llamador. Cuando llaman un turno, el llamado aparece encima y queda visible al costado.">
+      <Section title="Publicidad en la TV" hint="Imágenes y videos MP4 que rotan en el recuadro de publicidad del llamador. Cuando llaman un turno, el llamado aparece encima y queda siempre visible al costado.">
         <Toggle checked={!!s.tv_media_enabled} onChange={(v) => set('tv_media_enabled', v)} label="Mostrar publicidad en la TV" />
-        <input ref={mediaFile} type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={(e) => e.target.files?.length && void uploadMedia(e.target.files)} />
+        <input ref={mediaFile} type="file" multiple accept={MEDIA_ACCEPT} className="hidden" onChange={(e) => e.target.files?.length && void uploadMedia(e.target.files)} />
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-          {(media.data ?? []).map((m) => (
-            <div key={m.key} className="group relative aspect-video overflow-hidden rounded-xl border border-line bg-paper">
-              <img src={m.url} alt="" className="h-full w-full object-cover transition group-hover:scale-105" />
-              <button onClick={() => void removeMedia(m)} className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-lg bg-black/60 text-white opacity-0 transition group-hover:opacity-100 focus:opacity-100" aria-label="Eliminar imagen">
-                <Trash2 size={15} />
-              </button>
+          {(media.data ?? []).map((m, i, all) => (
+            <div key={m.id} className="group relative aspect-video overflow-hidden rounded-xl border border-line bg-black">
+              {m.kind === 'video' ? <video src={m.url} className="h-full w-full object-cover" muted preload="metadata" /> : <img src={m.url} alt="" className="h-full w-full object-cover transition group-hover:scale-105" />}
+              <span className="absolute left-2 top-2 rounded-md bg-black/60 px-1.5 py-0.5 text-[10.5px] font-semibold uppercase text-white">{m.kind === 'video' ? 'Video' : 'Imagen'} · {i + 1}</span>
+              <div className="absolute inset-x-0 bottom-0 flex items-center gap-1 bg-gradient-to-t from-black/80 to-transparent p-2 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+                <span className="min-w-0 flex-1 truncate text-[11px] text-white/85">{m.name ?? ''}</span>
+                <button onClick={() => void moveMedia(m, -1)} disabled={i === 0} className="grid h-7 w-7 place-items-center rounded-md bg-white/15 text-white disabled:opacity-30" aria-label="Mover antes">‹</button>
+                <button onClick={() => void moveMedia(m, 1)} disabled={i === all.length - 1} className="grid h-7 w-7 place-items-center rounded-md bg-white/15 text-white disabled:opacity-30" aria-label="Mover después">›</button>
+                <button onClick={() => void removeMedia(m)} className="grid h-7 w-7 place-items-center rounded-md bg-red-500/80 text-white" aria-label="Eliminar"><Trash2 size={13} /></button>
+              </div>
             </div>
           ))}
           <button
@@ -212,18 +248,28 @@ export default function SettingsPage() {
             onClick={() => mediaFile.current?.click()}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => { e.preventDefault(); if (e.dataTransfer.files.length) void uploadMedia(e.dataTransfer.files) }}
-            disabled={uploading}
-            className="flex aspect-video flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-line text-muted transition hover:border-brand hover:bg-brand-soft/40 hover:text-brand"
+            disabled={!!uploading}
+            className="relative flex aspect-video flex-col items-center justify-center gap-1.5 overflow-hidden rounded-xl border-2 border-dashed border-line text-muted transition hover:border-brand hover:bg-brand-soft/40 hover:text-brand"
           >
-            <ImagePlus size={22} />
-            <span className="text-[13px] font-medium">{uploading ? 'Subiendo…' : 'Subir imágenes'}</span>
-            <span className="text-[11px]">o arrastralas acá · máx. 2 MB</span>
+            {uploading ? (
+              <>
+                <span className="text-[13px] font-medium">Subiendo… {uploading.pct}%</span>
+                <span className="max-w-[90%] truncate text-[11px]">{uploading.name}</span>
+                <span className="absolute inset-x-0 bottom-0 h-1 bg-line"><span className="block h-full bg-brand transition-all" style={{ width: `${uploading.pct}%` }} /></span>
+              </>
+            ) : (
+              <>
+                <ImagePlus size={22} />
+                <span className="text-[13px] font-medium">Subir imágenes o videos</span>
+                <span className="text-[11px]">MP4/WEBM hasta 200 MB · imágenes hasta 5 MB</span>
+              </>
+            )}
           </button>
         </div>
-        <Field label="Videos o imágenes por dirección (opcional)" hint="Una dirección http/https por línea. Para videos usá .mp4 o .webm.">
+        <Field label="Videos o imágenes por dirección (opcional)" hint="Una dirección http/https por línea.">
           <textarea className={inputCls} rows={2} value={s.tv_media_urls || ''} onChange={(e) => set('tv_media_urls', e.target.value)} placeholder="https://ejemplo.com/aviso.mp4" />
         </Field>
-        <Field label="Segundos por imagen"><input type="number" min={5} max={300} className={`${inputCls} max-w-40`} value={s.tv_media_interval_sec || 20} onChange={(e) => set('tv_media_interval_sec', Number(e.target.value))} /></Field>
+        <Field label="Segundos por imagen" hint="Los videos se reproducen completos antes de pasar al siguiente."><input type="number" min={5} max={300} className={`${inputCls} max-w-40`} value={s.tv_media_interval_sec || 20} onChange={(e) => set('tv_media_interval_sec', Number(e.target.value))} /></Field>
       </Section>
 
       <Section title="Identificación del paciente" hint="Cómo se identifica el paciente en el tótem antes de sacar turno.">
@@ -243,6 +289,11 @@ export default function SettingsPage() {
               ? 'Se pide el documento, pero el paciente puede continuar sin identificarse.'
               : 'El tótem muestra directamente los botones, sin pedir datos.'}
         </p>
+        {s.totem_patient_mode !== 'off' && (
+          <Field label="Texto de consentimiento" hint="El paciente nuevo debe aceptarlo antes de registrarse en el tótem.">
+            <textarea className={inputCls} rows={2} value={s.consent_text} onChange={(e) => set('consent_text', e.target.value)} maxLength={400} />
+          </Field>
+        )}
         <Toggle checked={!!s.priorities_enabled} onChange={(v) => set('priorities_enabled', v)} label="Habilitar prioridades" hint="Muestra los botones de atención preferencial/urgente en el tótem y la sección Prioridades. Apagado: todos los turnos se atienden por orden de llegada." />
       </Section>
 
@@ -258,7 +309,12 @@ export default function SettingsPage() {
         </div>
         {s.totem_pin === '0000' && <p className="rounded-lg bg-warn-soft px-3 py-2 text-sm text-warn">El PIN sigue siendo el de fábrica (0000). Cambialo antes de poner el tótem en uso.</p>}
         <Field label="Texto al pie del ticket"><input className={inputCls} value={s.ticket_footer} onChange={(e) => set('ticket_footer', e.target.value)} /></Field>
-        <Toggle checked={!!s.qr_ticket_enabled} onChange={(v) => set('qr_ticket_enabled', v)} label="QR en el ticket para seguir el turno desde el celular" hint="El paciente escanea y ve cuántas personas tiene adelante y a dónde ir cuando lo llaman." />
+        <Toggle checked={!!s.qr_ticket_enabled} onChange={(v) => set('qr_ticket_enabled', v)} label="QR en el ticket para seguir el turno desde el celular" hint="Abre un panel privado con los turnos que faltan, el tiempo estimado y el box al que ir." />
+        {s.qr_ticket_enabled && (
+          <Field label="Texto impreso debajo del QR" hint="Letra chica en el papel. Explica qué puede hacer el paciente con el ticket.">
+            <textarea className={inputCls} rows={2} value={s.ticket_qr_hint} onChange={(e) => set('ticket_qr_hint', e.target.value)} maxLength={300} />
+          </Field>
+        )}
       </Section>
 
       <Section title="Tiempos de espera y alertas" hint="Colores del semáforo en el panel de la secretaria y alertas del resumen.">
@@ -267,6 +323,29 @@ export default function SettingsPage() {
           <Field label="Amarillo desde (min)"><input type="number" min={1} max={600} className={inputCls} value={s.wait_warn_min} onChange={(e) => set('wait_warn_min', Number(e.target.value))} /></Field>
           <Field label="Rojo desde (min)"><input type="number" min={1} max={600} className={inputCls} value={s.wait_danger_min} onChange={(e) => set('wait_danger_min', Number(e.target.value))} /></Field>
           <Field label="Alerta si una cola supera"><input type="number" min={5} max={500} className={inputCls} value={s.alert_queue_waiting || 25} onChange={(e) => set('alert_queue_waiting', Number(e.target.value))} /></Field>
+        </div>
+      </Section>
+
+      <Section title="Seguridad y datos" hint="Doble factor obligatorio y conservación de la información.">
+        <Field label="Exigir doble factor a" hint="Esos usuarios deben configurar el código del celular para poder entrar. Recomendado para control maestro y administradores.">
+          <div className="flex flex-wrap gap-2">
+            {ROLE_OPTS.map((r) => {
+              const on = s.mfa_required_roles.includes(r.v)
+              return (
+                <button key={r.v} type="button" aria-pressed={on} onClick={() => set('mfa_required_roles', on ? s.mfa_required_roles.filter((x) => x !== r.v) : [...s.mfa_required_roles, r.v])} className={`rounded-lg border px-3 py-1.5 text-[13px] font-medium ${on ? 'border-brand bg-brand-soft text-brand' : 'border-line hover:bg-paper'}`}>
+                  {r.l}
+                </button>
+              )
+            })}
+          </div>
+        </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Anonimizar pacientes sin visitas después de (meses)" hint="Se borran nombre y documento; los turnos quedan para estadísticas. 0 = nunca.">
+            <input type="number" min={0} max={240} className={inputCls} value={s.patient_retention_months} onChange={(e) => set('patient_retention_months', Number(e.target.value))} />
+          </Field>
+          <Field label="Pasar turnos al archivo histórico después de (meses)" hint="Mantiene rápida la base. Las estadísticas se conservan en los resúmenes diarios.">
+            <input type="number" min={3} max={120} className={inputCls} value={s.archive_after_months} onChange={(e) => set('archive_after_months', Number(e.target.value))} />
+          </Field>
         </div>
       </Section>
 

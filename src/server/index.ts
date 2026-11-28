@@ -1,6 +1,11 @@
 import { buildApp } from './app.js'
 import { purgeExpiredSessions } from './auth.js'
 import { closeStaleTickets } from './queue.js'
+import { applyRetention, encryptLegacyDocuments } from './patients.js'
+import { migrateLegacyMedia } from './media.js'
+import { archiveOld, ensureStats } from './stats.js'
+import { startDbProbe } from './monitor.js'
+import { getSettings } from './settings.js'
 import { createCtx, migrator, runMigrations } from './runtime.js'
 
 const ctx = await createCtx()
@@ -15,8 +20,36 @@ try {
   process.exit(1)
 }
 
+// Tareas de puesta al día de datos (idempotentes)
+try {
+  const enc = await encryptLegacyDocuments(ctx)
+  if (enc.patients || enc.tickets) console.log(`Documentos cifrados: ${enc.patients} pacientes, ${enc.tickets} turnos sin DNI en claro`)
+  const moved = await migrateLegacyMedia(ctx)
+  if (moved) console.log(`${moved} imágenes de publicidad pasadas de la base a disco`)
+} catch (e) {
+  console.error('Error preparando datos:', (e as Error).message)
+}
+
 const app = await buildApp(ctx)
+startDbProbe(ctx)
+let lastDaily = ''
+/** Una vez por día: resúmenes de días cerrados, archivo histórico y conservación de datos de pacientes. */
+const daily = async () => {
+  const day = new Date().toISOString().slice(0, 10)
+  if (day === lastDaily) return
+  lastDaily = day
+  try {
+    const s = await getSettings(ctx)
+    const days = await ensureStats(ctx)
+    const archived = await archiveOld(ctx, s.archive_after_months)
+    const anon = await applyRetention(ctx, s.patient_retention_months)
+    if (days || archived || anon) app.log.warn(`Mantenimiento: ${days} días resumidos, ${archived} turnos archivados, ${anon} pacientes anonimizados`)
+  } catch (e) {
+    app.log.error(e)
+  }
+}
 const sweep = async () => {
+  void daily()
   try {
     const n = await closeStaleTickets(ctx)
     if (n) app.log.info(`${n} turnos de días anteriores cerrados`)

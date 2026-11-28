@@ -1,16 +1,16 @@
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Activity, AlertTriangle, CheckCircle2, Circle, Clock, KeyRound, Layers, Monitor, MonitorOff, Moon, Rocket, Ticket, UserCheck, Users, Hourglass } from 'lucide-react'
+import { Activity, AlertTriangle, ShieldCheck, CheckCircle2, Circle, Clock, KeyRound, Layers, Monitor, MonitorOff, Moon, Rocket, Ticket, UserCheck, Users, Hourglass } from 'lucide-react'
 import { api, type Stats } from '../lib/api'
 import { fmtMin, hhmm, longDate } from '../lib/format'
 import { useDebounced, useLive, useLoad } from '../lib/live'
-import { MANAGERS, useAuth } from '../auth'
+import { can, useAuth } from '../auth'
 import { BarChart, fillHours } from '../components/Charts'
 import { Button, Empty, ErrorBox, SkeletonPage, StatCard, useConfirm, useToast } from '../ui'
 
 interface Ov { date: string; sectors: (Stats & { id: number; name: string; color: string })[] }
 interface TicketRow { id: number; code: string; status: string; sectorName: string; sectorColor: string; label: string; createdAt: string; calledAt: string | null; desk: string | null; dni: string | null; patientName: string | null }
-type Alert = { type: 'queue_high'; sectorName: string; waiting: number; threshold: number } | { type: 'station_stale'; name: string; kind: string; lastSeenAt: string } | { type: 'default_pin' }
+type Alert = { type: 'mfa_recommended' } | { type: 'queue_high'; sectorName: string; waiting: number; threshold: number } | { type: 'station_stale'; name: string; kind: string; lastSeenAt: string } | { type: 'default_pin' }
 
 export const STATUS: Record<string, { t: string; c: string }> = {
   waiting: { t: 'En espera', c: 'badge-warn' },
@@ -30,13 +30,15 @@ export default function Overview() {
   const toast = useToast()
   const confirm = useConfirm()
   const { user } = useAuth()
-  const canEdit = !!user && MANAGERS.includes(user.role)
+  const canEdit = can(user, 'config.manage')
+  const canCancel = can(user, 'tickets.cancel')
+  const canClose = can(user, 'day.close')
   const ov = useLoad(() => api<Ov>('/api/admin/overview'))
   const tk = useLoad(() => api<TicketRow[]>('/api/admin/tickets'))
   const al = useLoad(() => api<{ alerts: Alert[] }>('/api/admin/ops-alerts'))
   const hours = useLoad(() => api<{ byHour: { hour: string; count: number }[] }>('/api/admin/stats'))
   const setup = useLoad(() =>
-    Promise.all([api<unknown[]>('/api/admin/stations'), canEdit ? api<{ role: string }[]>('/api/admin/users') : Promise.resolve(null)]).then(([st, us]) => ({
+    Promise.all([can(user, 'stations.manage') ? api<unknown[]>('/api/admin/stations') : Promise.resolve([]), canEdit ? api<{ role: string }[]>('/api/admin/users') : Promise.resolve(null)]).then(([st, us]) => ({
       stations: st.length,
       users: us ? us.filter((u) => u.role === 'secretary').length : 1,
     })),
@@ -98,7 +100,7 @@ export default function Overview() {
           </h1>
           <p className="mt-1 text-[14px] text-muted">Así viene la atención hoy. Todo se actualiza en vivo.</p>
         </div>
-        {canEdit && tot.total > 0 && <Button variant="soft" size="sm" onClick={closeDay}><Moon size={15} /> Cerrar el día</Button>}
+        {canClose && tot.total > 0 && <Button variant="soft" size="sm" onClick={closeDay}><Moon size={15} /> Cerrar el día</Button>}
       </motion.div>
 
       {canEdit && pending > 0 && setup.data && (
@@ -126,7 +128,17 @@ export default function Overview() {
         </motion.div>
       )}
 
-      {alerts.some((a) => a.type !== 'default_pin') && (
+      {alerts.some((a) => a.type === 'mfa_recommended') && (
+        <motion.div variants={item}>
+          <Link to="/cuenta" className="flex items-center gap-3 rounded-xl border border-brand/25 bg-brand-soft/60 px-4 py-3 text-[14px] hover:bg-brand-soft">
+            <ShieldCheck size={18} className="text-brand" />
+            <span className="flex-1">Protegé tu cuenta con <b>doble factor</b>: tenés acceso de administración y sin el código del celular nadie puede entrar aunque sepa tu contraseña.</span>
+            <span className="text-[13px] font-medium text-brand">Activar →</span>
+          </Link>
+        </motion.div>
+      )}
+
+      {alerts.some((a) => a.type === 'queue_high' || a.type === 'station_stale') && (
         <motion.div variants={item} className="space-y-2">
           {alerts.map((a, i) =>
             a.type === 'queue_high' ? (
@@ -240,7 +252,7 @@ export default function Overview() {
                     <td>{hhmm(t.createdAt)}</td>
                     <td>{hhmm(t.calledAt)}{t.desk ? ` · ${t.desk}` : ''}</td>
                     <td><span className={`badge ${STATUS[t.status]?.c}`}>{STATUS[t.status]?.t}</span></td>
-                    <td className="text-right">{canEdit && ['waiting', 'called', 'serving'].includes(t.status) && <Button variant="ghost" size="sm" onClick={() => cancel(t)}>Cancelar</Button>}</td>
+                    <td className="text-right">{canCancel && ['waiting', 'called', 'serving'].includes(t.status) && <Button variant="ghost" size="sm" onClick={() => cancel(t)}>Cancelar</Button>}</td>
                   </tr>
                 ))}
               </tbody>

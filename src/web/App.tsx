@@ -1,12 +1,16 @@
+import { lazy, Suspense } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AuthProvider, RequireRole, STAFF, homeFor, useAuth } from './auth'
 import { ToastProvider, ConfirmProvider, Spinner } from './ui'
-import Login from './pages/Login'
-import Master from './pages/Master'
-import Desk from './pages/Desk'
-import Totem from './pages/Totem'
-import Tv from './pages/Tv'
-import TicketStatus from './pages/TicketStatus'
+
+// Carga dividida: cada pantalla se descarga solo cuando se usa (el tótem y la TV no bajan el panel maestro)
+const Login = lazy(() => import('./pages/Login'))
+const Master = lazy(() => import('./pages/Master'))
+const Desk = lazy(() => import('./pages/Desk'))
+const Totem = lazy(() => import('./pages/Totem'))
+const Tv = lazy(() => import('./pages/Tv'))
+const TicketStatus = lazy(() => import('./pages/TicketStatus'))
+const Account = lazy(() => import('./pages/Account'))
 
 function Home() {
   const { user, loading } = useAuth()
@@ -19,19 +23,22 @@ export default function App() {
     <AuthProvider>
       <ToastProvider>
         <ConfirmProvider>
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/master/*" element={<RequireRole roles={STAFF}><Master /></RequireRole>} />
-            <Route path="/panel" element={<RequireRole roles={['secretary']}><Desk /></RequireRole>} />
-            <Route path="/desk" element={<Navigate to="/panel" replace />} />
-            <Route path="/totem" element={<Totem />} />
-            <Route path="/totem/:deviceKey" element={<Totem />} />
-            <Route path="/tv" element={<Tv />} />
-            <Route path="/tv/:deviceKey" element={<Tv />} />
-            <Route path="/t/:code" element={<TicketStatus />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+          <Suspense fallback={<Spinner />}>
+            <Routes>
+              <Route path="/" element={<Home />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/master/*" element={<RequireRole roles={STAFF}><Master /></RequireRole>} />
+              <Route path="/panel" element={<RequireRole roles={['secretary']}><Desk /></RequireRole>} />
+              <Route path="/cuenta" element={<RequireRole roles={[...STAFF, 'secretary']}><Account /></RequireRole>} />
+              <Route path="/desk" element={<Navigate to="/panel" replace />} />
+              <Route path="/totem" element={<Totem />} />
+              <Route path="/totem/:deviceKey" element={<Totem />} />
+              <Route path="/tv" element={<Tv />} />
+              <Route path="/tv/:deviceKey" element={<Tv />} />
+              <Route path="/t/:token" element={<TicketStatus />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
         </ConfirmProvider>
       </ToastProvider>
     </AuthProvider>

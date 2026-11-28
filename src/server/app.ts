@@ -7,6 +7,8 @@ import { ZodError } from 'zod'
 import { adminRoutes } from './routes-admin.js'
 import { deskRoutes } from './routes-desk.js'
 import { publicRoutes } from './routes-public.js'
+import { mediaRoutes } from './media.js'
+import { metrics, monitorRoutes } from './monitor.js'
 import type { Ctx } from './db.js'
 import { HttpError } from './errors.js'
 
@@ -54,6 +56,7 @@ export async function buildApp(ctx: Ctx) {
     reply.header('Content-Security-Policy', CSP)
     if (ctx.cfg.cookieSecure) reply.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
   })
+  app.addHook('onResponse', async (_req, reply) => metrics.request(reply.statusCode))
   app.addHook('onSend', async (req, reply, payload) => {
     if (req.url.startsWith('/api/')) reply.header('Cache-Control', 'no-store')
     return payload
@@ -81,6 +84,7 @@ export async function buildApp(ctx: Ctx) {
       })
     if (err.statusCode && err.statusCode < 500) return reply.code(err.statusCode).send({ error: err.message })
     req.log.error(err)
+    metrics.error(req.method, req.url, String(err?.message ?? err))
     return reply.code(500).send({ error: 'Error interno del servidor' })
   })
 
@@ -97,6 +101,8 @@ export async function buildApp(ctx: Ctx) {
   publicRoutes(app, ctx)
   deskRoutes(app, ctx)
   adminRoutes(app, ctx)
+  mediaRoutes(app, ctx)
+  monitorRoutes(app, ctx)
 
   if (existsSync(ctx.cfg.webDir)) {
     await app.register(fastifyStatic, {

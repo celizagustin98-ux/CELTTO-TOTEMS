@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Flag, Pencil, Plus } from 'lucide-react'
 import { api, type Priority } from '../lib/api'
 import { useLoad } from '../lib/live'
-import { MANAGERS, useAuth } from '../auth'
+import { can, useAuth } from '../auth'
 import { Button, Card, ColorPicker, Empty, ErrorBox, Field, Modal, PageHeader, Spinner, Toggle, inputCls, useToast } from '../ui'
 
 type Form = { id?: number; name: string; weight: number; color: string; active: boolean }
@@ -10,7 +10,7 @@ type Form = { id?: number; name: string; weight: number; color: string; active: 
 export default function Priorities() {
   const toast = useToast()
   const { user } = useAuth()
-  const canEdit = !!user && MANAGERS.includes(user.role)
+  const canEdit = can(user, 'priorities.manage')
   const { data, error, loading, reload } = useLoad(() => api<Priority[]>('/api/admin/priorities'))
   const [f, setF] = useState<Form | null>(null)
   const [busy, setBusy] = useState(false)

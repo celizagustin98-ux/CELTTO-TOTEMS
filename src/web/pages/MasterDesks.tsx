@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Armchair, Pencil, Plus, Trash2 } from 'lucide-react'
 import { api, type Sector } from '../lib/api'
 import { useLoad } from '../lib/live'
-import { MANAGERS, useAuth } from '../auth'
+import { can, useAuth } from '../auth'
 import { Button, Card, Empty, ErrorBox, Field, Modal, PageHeader, Spinner, inputCls, useConfirm, useToast } from '../ui'
 
 type Desk = { id: number; sector_id: number; name: string; code: string }
@@ -12,7 +12,7 @@ export default function Desks() {
   const toast = useToast()
   const confirm = useConfirm()
   const { user } = useAuth()
-  const canEdit = !!user && MANAGERS.includes(user.role)
+  const canEdit = can(user, 'desks.manage')
   const sectors = useLoad(() => api<Sector[]>('/api/admin/sectors'))
   const desks = useLoad(() => api<Desk[]>('/api/admin/desks'))
   const [f, setF] = useState<Form | null>(null)

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ArrowLeft, ArrowRight, Check, IdCard, Printer, Settings2, ShieldCheck, UserRoundPlus, WifiOff } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, CloudOff, IdCard, Printer, Settings2, ShieldCheck, UserRoundPlus, WifiOff } from 'lucide-react'
 import { api, ApiError, type Settings } from '../lib/api'
 import { clock, longDate, textOn } from '../lib/format'
 import { useIdle, useLive, useNow } from '../lib/live'
@@ -13,13 +13,13 @@ import { Logo } from '../components/Brand'
 import { AlphaKeyboard, NumPad } from '../components/Keyboards'
 import { Button, QR, inputCls } from '../ui'
 
-interface PubBtn { id: number; label: string; subtitle: string | null; color: string; icon: string | null; priorityName: string | null }
+interface PubBtn { id: number; label: string; subtitle: string | null; color: string; icon: string | null; priorityName: string | null; prefix: string }
 interface PubSector { id: number; name: string; color: string; welcomeMessage: string | null; buttons: PubBtn[] }
 type PubSettings = Omit<Settings, 'totem_pin'>
 interface PubData { sectors: PubSector[]; settings: PubSettings; logoVersion: string | null }
-interface Issued { id: number; code: string; label: string; sectorName: string; color: string; priorityName: string | null; waitingAhead: number; estimatedWaitMin: number | null; qrPath: string | null; createdAt: string; patientName: string | null }
+interface Issued { id: number; code: string; label: string; sectorName: string; color: string; priorityName: string | null; waitingAhead: number; estimatedWaitMin: number | null; qrPath: string | null; createdAt: string; patientName: string | null; offline?: boolean }
 interface StationInfo { id: number; kind: string; name: string; sectorId: number | null; sectorName: string | null; lang: string | null }
-type Patient = { document: string; greeting: string | null; firstName?: string; lastName?: string } | null
+type Patient = { document: string; greeting: string | null; firstName?: string; lastName?: string; consent?: boolean } | null
 type Step = 'id' | 'register' | 'buttons'
 
 const KEY = 'celtto.totem.sector'
@@ -37,6 +37,28 @@ function localDeviceKey() {
   }
   return k
 }
+const CACHE_KEY = 'celtto.totem.cache'
+const QUEUE_KEY = 'celtto.totem.offline.queue'
+const SEQ_KEY = 'celtto.totem.offline.seq'
+type QueuedTicket = { ref: string; buttonId: number; code: string; createdAt: string; patient?: { document: string; firstName?: string; lastName?: string; consent?: boolean } }
+const readJson = <T,>(k: string, d: T): T => {
+  try {
+    const v = store.get(k)
+    return v ? (JSON.parse(v) as T) : d
+  } catch {
+    return d
+  }
+}
+/** Número corto del equipo para los turnos sin conexión (A-T3-001): id de la estación o derivado del dispositivo. */
+const shortDevice = (stationId: number | undefined, deviceKey: string) => {
+  if (stationId) return String(stationId).slice(-3)
+  let h = 0
+  for (const ch of deviceKey) h = (h * 31 + ch.charCodeAt(0)) >>> 0
+  return (h % 1296).toString(36).toUpperCase().padStart(2, '0')
+}
+const todayLocal = () => new Date().toLocaleDateString('en-CA')
+const isNetworkError = (e: unknown) => e instanceof ApiError && e.status === 0
+
 const fmtDoc = (d: string) => (/^\d+$/.test(d) ? d.replace(/\B(?=(\d{3})+(?!\d))/g, '.') : d)
 const slide = {
   initial: { opacity: 0, x: 60, filter: 'blur(4px)' },
@@ -74,14 +96,40 @@ export default function Totem() {
     defaultLang()
   }, [defaultLang])
 
+  const [offline, setOffline] = useState(false)
+  const [pending, setPending] = useState(() => readJson<QueuedTicket[]>(QUEUE_KEY, []).length)
   const load = useCallback(async () => {
     try {
-      setData(await api<PubData>('/api/public/sectors'))
+      const d = await api<PubData>('/api/public/sectors')
+      setData(d)
       setError('')
+      setOffline(false)
+      store.set(CACHE_KEY, JSON.stringify(d))
     } catch (e) {
-      setError((e as Error).message)
+      // Sin conexión: se sigue trabajando con la última configuración guardada en el equipo
+      const cached = readJson<PubData | null>(CACHE_KEY, null)
+      if (cached && isNetworkError(e)) {
+        setData((cur) => cur ?? cached)
+        setOffline(true)
+      } else setError((e as Error).message)
     }
   }, [])
+
+  /** Envía al servidor los turnos emitidos sin conexión (idempotente: no se duplican). */
+  const syncQueue = useCallback(async () => {
+    const queue = readJson<QueuedTicket[]>(QUEUE_KEY, [])
+    if (!queue.length) return
+    try {
+      const r = await api<{ results: { ref: string; ok: boolean }[] }>('/api/public/tickets/offline-sync', { body: { deviceKey: stationKey || localDeviceKey(), tickets: queue.slice(0, 200) } })
+      const done = new Set(r.results.filter((x) => x.ok).map((x) => x.ref))
+      const left = readJson<QueuedTicket[]>(QUEUE_KEY, []).filter((q) => !done.has(q.ref))
+      store.set(QUEUE_KEY, JSON.stringify(left))
+      setPending(left.length)
+      setOffline(false)
+    } catch (e) {
+      if (isNetworkError(e)) setOffline(true)
+    }
+  }, [stationKey])
   const loadStation = useCallback(async () => {
     if (!stationKey) return
     try {
@@ -100,6 +148,9 @@ export default function Totem() {
   }, [stationKey])
 
   useEffect(() => { void load(); const id = setInterval(load, 5 * 60_000); return () => clearInterval(id) }, [load])
+  useEffect(() => { void syncQueue(); const id = setInterval(syncQueue, 20_000); return () => clearInterval(id) }, [syncQueue])
+  // Guarda la app en el equipo para poder abrirla aunque se corte la red
+  useEffect(() => { if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {}) }, [])
   useEffect(() => { void loadStation(); const id = setInterval(loadStation, 120_000); return () => clearInterval(id) }, [loadStation])
   useEffect(() => { if (station?.lang) defaultLang() }, [station?.lang, defaultLang])
   useEffect(() => { if (idle) reset() }, [idle, reset])
@@ -108,6 +159,7 @@ export default function Totem() {
 
   const connected = useLive((m) => {
     if (m.type === 'config') { void load(); void loadStation() }
+    if (m.type === 'hello') void syncQueue()
   })
 
   useEffect(() => {
@@ -141,10 +193,32 @@ export default function Totem() {
         setStep('register')
       }
     } catch (e) {
-      showFail((e as Error).message)
+      // Sin conexión no se puede verificar: se sigue con el documento y se resuelve al sincronizar
+      if (isNetworkError(e)) {
+        setOffline(true)
+        setPatient({ document, greeting: null })
+        setStep('buttons')
+      } else showFail((e as Error).message)
     } finally {
       setBusy(false)
     }
+  }
+
+  /** Emite un turno local cuando no hay conexión; se imprime igual y se sincroniza después. */
+  const issueOffline = (b: PubBtn) => {
+    const sector = data!.sectors.find((x) => x.buttons.some((y) => y.id === b.id))!
+    const seq = readJson<{ date: string; n: number }>(SEQ_KEY, { date: '', n: 0 })
+    const n = seq.date === todayLocal() ? seq.n + 1 : 1
+    store.set(SEQ_KEY, JSON.stringify({ date: todayLocal(), n }))
+    const code = `${b.prefix}-T${shortDevice(station?.id, stationKey || localDeviceKey())}-${String(n).padStart(3, '0')}`
+    const createdAt = new Date().toISOString()
+    const q: QueuedTicket = { ref: `${Date.now().toString(36)}${crypto.getRandomValues(new Uint32Array(2)).join('')}`.slice(0, 32), buttonId: b.id, code, createdAt }
+    if (patient) q.patient = { document: patient.document, firstName: patient.firstName, lastName: patient.lastName, consent: patient.consent }
+    const queue = [...readJson<QueuedTicket[]>(QUEUE_KEY, []), q]
+    store.set(QUEUE_KEY, JSON.stringify(queue))
+    setPending(queue.length)
+    setIssued({ id: 0, code, label: b.label, sectorName: sector.name, color: b.color, priorityName: null, waitingAhead: -1, estimatedWaitMin: null, qrPath: null, createdAt, patientName: patient?.firstName?.split(' ')[0] ?? null, offline: true })
+    if (data?.settings.totem_auto_print) setTimeout(() => window.print(), 400)
   }
 
   const issue = async (b: PubBtn) => {
@@ -154,12 +228,15 @@ export default function Totem() {
     try {
       const deviceKey = stationKey || localDeviceKey()
       const body: Record<string, unknown> = { buttonId: b.id, deviceKey }
-      if (patient) body.patient = { document: patient.document, firstName: patient.firstName, lastName: patient.lastName }
+      if (patient) body.patient = { document: patient.document, firstName: patient.firstName, lastName: patient.lastName, consent: patient.consent }
       const tk = await api<Issued>('/api/public/tickets', { body })
       setIssued(tk)
       if (data?.settings.totem_auto_print) setTimeout(() => window.print(), 400)
     } catch (e) {
-      if (e instanceof ApiError && e.message === 'patient_not_found') setStep('register')
+      if (isNetworkError(e)) {
+        setOffline(true)
+        issueOffline(b)
+      } else if (e instanceof ApiError && e.message === 'patient_not_found') setStep('register')
       else showFail((e as Error).message || t('totem.errorIssue'))
       void load()
     } finally {
@@ -168,6 +245,7 @@ export default function Totem() {
   }
   const reprint = async () => {
     if (!issued) return
+    if (issued.offline) return window.print()
     await api(`/api/public/tickets/${issued.id}/reprint`, { method: 'POST' }).catch(() => {})
     window.print()
   }
@@ -225,9 +303,12 @@ export default function Totem() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-5">
-          {!connected && (
-            <span className="flex items-center gap-2 rounded-full bg-red-500/20 px-3 py-1.5 text-sm text-red-100"><WifiOff size={16} /> {t('totem.offline')}</span>
+          {(offline || !connected) && (
+            <span className="flex items-center gap-2 rounded-full bg-amber-500/20 px-3 py-1.5 text-sm text-amber-100" title="Los turnos se emiten igual y se sincronizan al volver la conexión">
+              <CloudOff size={16} /> Sin conexión{pending ? ` · ${pending} por sincronizar` : ''}
+            </span>
           )}
+          {!offline && connected && pending > 0 && <span className="rounded-full bg-white/10 px-3 py-1.5 text-sm text-white/70">Sincronizando {pending}…</span>}
           <LanguagePills />
           <div className="text-right">
             <div className="num text-4xl leading-none">{clock(now)}</div>
@@ -274,7 +355,7 @@ export default function Totem() {
             </motion.div>
           ) : step === 'register' && patient ? (
             <motion.div key="register" {...slide} className="flex min-h-0 flex-1 items-start justify-center overflow-auto p-6">
-              <RegisterStep accent={accent} document={patient.document} onBack={() => setStep('id')} onSubmit={(firstName, lastName) => { setPatient({ document: patient.document, greeting: firstName.split(' ')[0], firstName, lastName }); setStep('buttons') }} />
+              <RegisterStep accent={accent} document={patient.document} consentText={settings.consent_text} onBack={() => setStep('id')} onSubmit={(firstName, lastName) => { setPatient({ document: patient.document, greeting: firstName.split(' ')[0], firstName, lastName, consent: true }); setStep('buttons') }} />
             </motion.div>
           ) : (
             <motion.div key="buttons" {...slide} className="flex min-h-0 flex-1 flex-col overflow-auto px-6 pb-8 sm:px-10">
@@ -355,7 +436,10 @@ export default function Totem() {
               </div>
               <div className="flex flex-col gap-6 px-10 py-8 sm:flex-row sm:items-center">
                 <div className="flex-1 space-y-2">
-                  <p className="display text-3xl font-semibold">{issued.waitingAhead === 0 ? t('totem.next') : issued.waitingAhead === 1 ? t('totem.aheadOne') : t('totem.aheadMany', { n: issued.waitingAhead })}</p>
+                  {issued.offline ? (
+                    <p className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2 text-base text-amber-900"><CloudOff size={20} className="mt-0.5 shrink-0" /> Turno emitido sin conexión. Conservá el ticket: se registra solo cuando vuelve la red.</p>
+                  ) : null}
+                  {!issued.offline && <p className="display text-3xl font-semibold">{issued.waitingAhead === 0 ? t('totem.next') : issued.waitingAhead === 1 ? t('totem.aheadOne') : t('totem.aheadMany', { n: issued.waitingAhead })}</p>}
                   {issued.estimatedWaitMin != null && issued.waitingAhead > 0 && <p className="text-xl text-slate-600">{t('totem.estimated', { n: issued.estimatedWaitMin })}</p>}
                   <p className="text-lg text-slate-500">{t('totem.wait')}</p>
                   {settings.totem_auto_print && <p className="flex items-center gap-2 pt-1 text-base text-slate-500"><Printer size={18} /> {t('totem.printing')}</p>}
@@ -389,12 +473,16 @@ export default function Totem() {
           {issued.patientName && <div style={{ fontSize: 13, marginTop: 2 }}>{issued.patientName}</div>}
           {issued.priorityName && <div style={{ fontSize: 12, marginTop: 2 }}>{t('totem.priority')}: {issued.priorityName}</div>}
           <div style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
-          <div style={{ fontSize: 12 }}>{issued.waitingAhead === 0 ? t('totem.next') : issued.waitingAhead === 1 ? t('totem.aheadOne') : t('totem.aheadMany', { n: issued.waitingAhead })}</div>
+          {issued.offline ? (
+            <div style={{ fontSize: 11 }}>Emitido sin conexión. Seguí los llamados en la pantalla de la sala.</div>
+          ) : (
+            <div style={{ fontSize: 12 }}>{issued.waitingAhead === 0 ? t('totem.next') : issued.waitingAhead === 1 ? t('totem.aheadOne') : t('totem.aheadMany', { n: issued.waitingAhead })}</div>
+          )}
           {issued.estimatedWaitMin != null && issued.waitingAhead > 0 && <div style={{ fontSize: 12 }}>{t('totem.estimated', { n: issued.estimatedWaitMin })}</div>}
           {qrUrl && (
             <div style={{ marginTop: 8 }}>
-              <QR value={qrUrl} size={110} className="mx-auto" />
-              <div style={{ fontSize: 10, marginTop: 2 }}>{t('totem.scanQr')}</div>
+              <QR value={qrUrl} size={120} className="mx-auto" />
+              <div style={{ fontSize: 9.5, lineHeight: 1.25, marginTop: 3, padding: '0 2mm' }}>{settings.ticket_qr_hint || t('totem.scanQr')}</div>
             </div>
           )}
           <div style={{ fontSize: 11, marginTop: 8 }}>{new Date(issued.createdAt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}</div>
@@ -473,13 +561,14 @@ function DocumentStep({ accent, busy, optional, onSubmit, onSkip }: { accent: st
 }
 
 /** Paso 1b: alta del paciente nuevo con teclado alfabético en pantalla. */
-function RegisterStep({ accent, document, onBack, onSubmit }: { accent: string; document: string; onBack: () => void; onSubmit: (first: string, last: string) => void }) {
+function RegisterStep({ accent, document, consentText, onBack, onSubmit }: { accent: string; document: string; consentText: string; onBack: () => void; onSubmit: (first: string, last: string) => void }) {
   const { t } = useTranslation()
   const [first, setFirst] = useState('')
   const [last, setLast] = useState('')
   const [field, setField] = useState<'first' | 'last'>('first')
+  const [consent, setConsent] = useState(false)
   const set = field === 'first' ? setFirst : setLast
-  const ok = first.trim().length >= 2 && last.trim().length >= 2
+  const ok = first.trim().length >= 2 && last.trim().length >= 2 && consent
   const cap = (s: string) => s.toLowerCase().replace(/(^|[\s'-])(\p{L})/gu, (_m, a: string, b: string) => a + b.toUpperCase())
   const Input = ({ id, label, value }: { id: 'first' | 'last'; label: string; value: string }) => (
     <button type="button" onClick={() => setField(id)} className={`w-full rounded-2xl px-5 py-3 text-left transition ${field === id ? 'bg-white/[0.1] ring-2' : 'bg-white/[0.05] ring-1 ring-white/10'}`} style={field === id ? { boxShadow: `0 0 0 2px ${accent}` } : undefined}>
@@ -513,7 +602,11 @@ function RegisterStep({ accent, document, onBack, onSubmit }: { accent: string; 
       <div className="mt-5">
         <AlphaKeyboard onKey={(c) => set((x) => (x.length < 60 && !(c === ' ' && (x.endsWith(' ') || !x)) ? x + c : x))} onDelete={() => set((x) => x.slice(0, -1))} />
       </div>
-      <div className="mt-5 flex gap-3">
+      <button type="button" onClick={() => setConsent((v) => !v)} className={`mt-5 flex w-full items-start gap-4 rounded-2xl p-4 text-left ring-1 transition ${consent ? 'bg-white/[0.1] ring-white/30' : 'bg-white/[0.04] ring-white/10'}`} aria-pressed={consent}>
+        <span className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg ring-2 ${consent ? 'ring-transparent' : 'ring-white/40'}`} style={consent ? { background: accent, color: textOn(accent) } : undefined}>{consent && <Check size={20} />}</span>
+        <span className="text-lg leading-snug text-white/85">{consentText}</span>
+      </button>
+      <div className="mt-4 flex gap-3">
         {field === 'first' && first.trim().length >= 2 && !last && (
           <button onClick={() => setField('last')} className="h-16 flex-1 rounded-2xl text-xl font-semibold ring-1 ring-white/20 active:scale-[0.98]">{t('reg.lastName')} <ArrowRight className="ml-2 inline" size={22} /></button>
         )}

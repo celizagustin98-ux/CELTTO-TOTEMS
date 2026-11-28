@@ -22,6 +22,18 @@ const supportsAlterFk = (db: Kysely<any>) => {
   return a instanceof PostgresAdapter || a instanceof MssqlAdapter
 }
 
+/** Tipo fecha/hora real según el motor. */
+function tsType(db: Kysely<any>) {
+  const a = db.getExecutor().adapter
+  return a instanceof PostgresAdapter ? sql`timestamptz` : a instanceof MssqlAdapter ? sql`datetimeoffset(3)` : sql`varchar(30)`
+}
+
+/** Índice único que permite varios NULL (SQL Server solo admite uno salvo con índice filtrado). */
+async function uniqueWhereNotNull(db: Kysely<any>, name: string, table: string, column: string) {
+  if (db.getExecutor().adapter instanceof MssqlAdapter) await sql.raw(`CREATE UNIQUE INDEX ${name} ON ${table}(${column}) WHERE ${column} IS NOT NULL`).execute(db)
+  else await db.schema.createIndex(name).on(table).column(column).unique().execute()
+}
+
 export const migrations: Record<string, Migration> = {
   '001_init': {
     async up(db: Kysely<any>) {
@@ -272,6 +284,202 @@ export const migrations: Record<string, Migration> = {
       if (supportsAlterFk(db)) {
         await db.schema.alterTable('tickets').addForeignKeyConstraint('fk_tickets_patient', ['patient_id'], 'patients', ['id']).execute()
       }
+    },
+  },
+
+  /**
+   * 005: plataforma — fechas reales, multi-sede, supervisores por área, resúmenes diarios, archivo histórico,
+   * DNI cifrado, consentimiento y obra social, link privado del turno, sincronización sin conexión,
+   * doble factor y multimedia en disco.
+   */
+  '005_platform': {
+    async up(db: Kysely<any>) {
+      const id = pkId(db)
+      const adapter = db.getExecutor().adapter
+      const isPg = adapter instanceof PostgresAdapter
+      const isMs = adapter instanceof MssqlAdapter
+      const ts = tsType(db)
+
+      // 1) Fechas: de texto ISO a tipo fecha/hora real (SQLite no tiene tipo fecha: queda como texto)
+      const TS_COLUMNS: [string, string, boolean][] = [
+        ['sectors', 'created_at', true],
+        ['users', 'created_at', true],
+        ['users', 'last_login_at', false],
+        ['sessions', 'expires_at', true],
+        ['sessions', 'created_at', true],
+        ['tickets', 'created_at', true],
+        ['tickets', 'called_at', false],
+        ['tickets', 'last_call_at', false],
+        ['tickets', 'started_at', false],
+        ['tickets', 'finished_at', false],
+        ['ticket_events', 'created_at', true],
+        ['stations', 'last_seen_at', false],
+        ['stations', 'created_at', true],
+        ['audit_log', 'created_at', true],
+        ['day_closes', 'created_at', true],
+        ['assets', 'updated_at', true],
+        ['patients', 'last_visit_at', false],
+        ['patients', 'created_at', true],
+        ['patients', 'updated_at', true],
+      ]
+      if (isPg) {
+        for (const [t, c] of TS_COLUMNS) await sql.raw(`ALTER TABLE ${t} ALTER COLUMN ${c} TYPE timestamptz USING ${c}::timestamptz`).execute(db)
+      } else if (isMs) {
+        // SQL Server no permite cambiar el tipo de una columna indexada: se quitan y recrean esos índices
+        for (const ix of [['tickets', 'ix_tickets_lastcall'], ['audit_log', 'ix_audit_created'], ['sessions', 'ix_sessions_expires']])
+          await sql.raw(`DROP INDEX ${ix[1]} ON ${ix[0]}`).execute(db)
+        for (const [t, c, notNull] of TS_COLUMNS) await sql.raw(`ALTER TABLE ${t} ALTER COLUMN ${c} datetimeoffset(3) ${notNull ? 'NOT NULL' : 'NULL'}`).execute(db)
+        await db.schema.createIndex('ix_tickets_lastcall').on('tickets').columns(['business_date', 'last_call_at']).execute()
+        await db.schema.createIndex('ix_audit_created').on('audit_log').column('created_at').execute()
+        await db.schema.createIndex('ix_sessions_expires').on('sessions').column('expires_at').execute()
+      }
+
+      // 2) Sedes (multi-sede): cada secretaría pertenece a una sede
+      await db.schema
+        .createTable('sites')
+        .addColumn('id', 'integer', id)
+        .addColumn('name', 'varchar(100)', (c) => c.notNull())
+        .addColumn('code', 'varchar(20)', (c) => c.notNull().unique())
+        .addColumn('address', 'varchar(200)')
+        .addColumn('timezone', 'varchar(60)')
+        .addColumn('active', 'integer', (c) => c.notNull().defaultTo(1))
+        .addColumn('created_at', ts, (c) => c.notNull())
+        .execute()
+      await db.insertInto('sites').values({ name: 'Sede principal', code: 'principal', address: null, timezone: null, active: 1, created_at: new Date().toISOString() }).execute()
+      const site = await db.selectFrom('sites').select('id').where('code', '=', 'principal').executeTakeFirstOrThrow()
+      await db.schema.alterTable('sectors').addColumn('site_id', 'integer').execute()
+      await db.updateTable('sectors').set({ site_id: site.id }).execute()
+      await db.schema.alterTable('users').addColumn('site_id', 'integer').execute()
+      await db.schema.createIndex('ix_sectors_site').on('sectors').column('site_id').execute()
+      if (isPg || isMs) {
+        await db.schema.alterTable('sectors').addForeignKeyConstraint('fk_sectors_site', ['site_id'], 'sites', ['id']).execute()
+        await db.schema.alterTable('users').addForeignKeyConstraint('fk_users_site', ['site_id'], 'sites', ['id']).execute()
+      }
+
+      // 3) Áreas de cada supervisor
+      await db.schema
+        .createTable('user_sectors')
+        .addColumn('user_id', 'integer', (c) => c.notNull().references('users.id'))
+        .addColumn('sector_id', 'integer', (c) => c.notNull().references('sectors.id'))
+        .addPrimaryKeyConstraint('pk_user_sectors', ['user_id', 'sector_id'])
+        .execute()
+
+      // 4) Doble factor y desafíos de inicio de sesión
+      await db.schema.alterTable('users').addColumn('totp_secret_enc', 'varchar(300)').execute()
+      await db.schema.alterTable('users').addColumn('totp_pending_enc', 'varchar(300)').execute()
+      await db.schema.alterTable('users').addColumn('totp_enabled', 'integer', (c) => c.notNull().defaultTo(0)).execute()
+      await db.schema.alterTable('users').addColumn('totp_backup', 'varchar(1500)').execute()
+      await db.schema.alterTable('users').addColumn('password_changed_at', ts).execute()
+      await db.schema
+        .createTable('auth_challenges')
+        .addColumn('token_hash', 'varchar(64)', (c) => c.primaryKey().notNull())
+        .addColumn('user_id', 'integer', (c) => c.notNull().references('users.id'))
+        .addColumn('attempts', 'integer', (c) => c.notNull().defaultTo(0))
+        .addColumn('expires_at', ts, (c) => c.notNull())
+        .execute()
+
+      // 5) Resúmenes para reportes rápidos (por día, secretaría y usuario; y por hora)
+      await db.schema
+        .createTable('daily_stats')
+        .addColumn('id', 'integer', id)
+        .addColumn('business_date', 'varchar(10)', (c) => c.notNull())
+        .addColumn('site_id', 'integer')
+        .addColumn('sector_id', 'integer', (c) => c.notNull())
+        .addColumn('user_id', 'integer', (c) => c.notNull().defaultTo(0)) // 0 = total de la secretaría
+        .addColumn('issued', 'integer', (c) => c.notNull().defaultTo(0))
+        .addColumn('called', 'integer', (c) => c.notNull().defaultTo(0))
+        .addColumn('done', 'integer', (c) => c.notNull().defaultTo(0))
+        .addColumn('absent', 'integer', (c) => c.notNull().defaultTo(0))
+        .addColumn('cancelled', 'integer', (c) => c.notNull().defaultTo(0))
+        .addColumn('transferred', 'integer', (c) => c.notNull().defaultTo(0))
+        .addColumn('recalls', 'integer', (c) => c.notNull().defaultTo(0))
+        .addColumn('wait_sum_sec', 'integer', (c) => c.notNull().defaultTo(0))
+        .addColumn('wait_count', 'integer', (c) => c.notNull().defaultTo(0))
+        .addColumn('wait_max_sec', 'integer', (c) => c.notNull().defaultTo(0))
+        .addColumn('service_sum_sec', 'integer', (c) => c.notNull().defaultTo(0))
+        .addColumn('service_count', 'integer', (c) => c.notNull().defaultTo(0))
+        .addColumn('first_call_at', ts)
+        .addColumn('last_finish_at', ts)
+        .addColumn('computed_at', ts, (c) => c.notNull())
+        .execute()
+      await db.schema.createIndex('ux_daily_stats').on('daily_stats').columns(['business_date', 'sector_id', 'user_id']).unique().execute()
+      await db.schema
+        .createTable('hourly_stats')
+        .addColumn('business_date', 'varchar(10)', (c) => c.notNull())
+        .addColumn('sector_id', 'integer', (c) => c.notNull())
+        .addColumn('hour', 'integer', (c) => c.notNull())
+        .addColumn('weekday', 'integer', (c) => c.notNull())
+        .addColumn('issued', 'integer', (c) => c.notNull().defaultTo(0))
+        .addPrimaryKeyConstraint('pk_hourly_stats', ['business_date', 'sector_id', 'hour'])
+        .execute()
+
+      // 6) Archivo histórico: los turnos viejos salen de las tablas operativas (que quedan livianas)
+      await db.schema
+        .createTable('tickets_archive')
+        .addColumn('id', 'integer', (c) => c.primaryKey().notNull())
+        .addColumn('code', 'varchar(12)', (c) => c.notNull())
+        .addColumn('business_date', 'varchar(10)', (c) => c.notNull())
+        .addColumn('button_id', 'integer', (c) => c.notNull())
+        .addColumn('sector_id', 'integer', (c) => c.notNull())
+        .addColumn('origin_sector_id', 'integer', (c) => c.notNull())
+        .addColumn('priority', 'integer', (c) => c.notNull())
+        .addColumn('status', 'varchar(12)', (c) => c.notNull())
+        .addColumn('created_at', ts, (c) => c.notNull())
+        .addColumn('called_at', ts)
+        .addColumn('started_at', ts)
+        .addColumn('finished_at', ts)
+        .addColumn('called_by', 'integer')
+        .addColumn('desk', 'varchar(60)')
+        .addColumn('recall_count', 'integer', (c) => c.notNull())
+        .addColumn('patient_id', 'integer')
+        .addColumn('archived_at', ts, (c) => c.notNull())
+        .execute()
+      await db.schema.createIndex('ix_tickets_archive_date').on('tickets_archive').columns(['business_date', 'sector_id']).execute()
+      await db.schema
+        .createTable('ticket_events_archive')
+        .addColumn('id', 'integer', (c) => c.primaryKey().notNull())
+        .addColumn('ticket_id', 'integer', (c) => c.notNull())
+        .addColumn('type', 'varchar(20)', (c) => c.notNull())
+        .addColumn('user_id', 'integer')
+        .addColumn('data', 'varchar(500)')
+        .addColumn('created_at', ts, (c) => c.notNull())
+        .execute()
+      await db.schema.createIndex('ix_events_archive_ticket').on('ticket_events_archive').column('ticket_id').execute()
+
+      // 7) Paciente: DNI cifrado + hash para buscar, consentimiento y obra social
+      await db.schema.alterTable('patients').addColumn('document_hash', 'varchar(64)').execute()
+      await db.schema.alterTable('patients').addColumn('document_enc', 'varchar(300)').execute()
+      await db.schema.alterTable('patients').addColumn('document_last4', 'varchar(4)').execute()
+      await db.schema.alterTable('patients').addColumn('consent_at', ts).execute()
+      await db.schema.alterTable('patients').addColumn('consent_version', 'varchar(20)').execute()
+      await db.schema.alterTable('patients').addColumn('health_insurance', 'varchar(80)').execute()
+      await db.schema.alterTable('patients').addColumn('insurance_number', 'varchar(40)').execute()
+      // DROP INDEX ... ON tabla es sintaxis de SQL Server; en PostgreSQL/SQLite va solo el nombre
+      await (isMs ? db.schema.dropIndex('ux_patients_document').on('patients') : db.schema.dropIndex('ux_patients_document')).execute()
+      if (isPg) await sql`ALTER TABLE patients ALTER COLUMN document DROP NOT NULL`.execute(db)
+      if (isMs) await sql`ALTER TABLE patients ALTER COLUMN document varchar(20) NULL`.execute(db)
+      await uniqueWhereNotNull(db, 'ux_patients_doc_hash', 'patients', 'document_hash')
+
+      // 8) Turno: link privado para el QR y referencia para sincronizar turnos emitidos sin conexión
+      await db.schema.alterTable('tickets').addColumn('public_token', 'varchar(32)').execute()
+      await db.schema.alterTable('tickets').addColumn('offline_ref', 'varchar(40)').execute()
+      await db.schema.alterTable('tickets').addColumn('origin', 'varchar(10)', (c) => c.notNull().defaultTo('online')).execute()
+      await uniqueWhereNotNull(db, 'ux_tickets_public_token', 'tickets', 'public_token')
+      await uniqueWhereNotNull(db, 'ux_tickets_offline_ref', 'tickets', 'offline_ref')
+
+      // 9) Multimedia de la TV: el archivo va al disco; la base guarda solo los datos
+      await db.schema
+        .createTable('media')
+        .addColumn('id', 'integer', id)
+        .addColumn('file_key', 'varchar(40)', (c) => c.notNull().unique())
+        .addColumn('kind', 'varchar(10)', (c) => c.notNull())
+        .addColumn('mime', 'varchar(40)', (c) => c.notNull())
+        .addColumn('size_bytes', 'integer', (c) => c.notNull())
+        .addColumn('original_name', 'varchar(200)')
+        .addColumn('sort_order', 'integer', (c) => c.notNull().defaultTo(0))
+        .addColumn('active', 'integer', (c) => c.notNull().defaultTo(1))
+        .addColumn('created_at', ts, (c) => c.notNull())
+        .execute()
     },
   },
 }

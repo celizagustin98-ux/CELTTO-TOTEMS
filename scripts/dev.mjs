@@ -23,13 +23,19 @@ function loadLocalEnv() {
       if (m) out[m[1]] = m[2]
     }
   }
+  if (!out.DATA_KEY) {
+    out.DATA_KEY = randomBytes(32).toString('base64url')
+    // Clave de cifrado de desarrollo: se guarda para que los DNI cifrados se sigan leyendo entre reinicios
+    const prev = existsSync(envFile) ? readFileSync(envFile, 'utf8').trimEnd() + '\n' : ''
+    writeFileSync(envFile, `${prev}DATA_KEY=${out.DATA_KEY}\n`)
+  }
   if (!out.OWNER_USERNAME || !out.OWNER_PASSWORD) {
     out.OWNER_USERNAME ||= 'dueno'
     out.OWNER_PASSWORD ||= `Dev-${randomBytes(6).toString('base64url')}`
     out.DEMO_PASSWORD ||= 'demo12345'
     writeFileSync(
       envFile,
-      `# Credenciales de PRUEBA para npm run dev (no se suben a git)\nOWNER_USERNAME=${out.OWNER_USERNAME}\nOWNER_PASSWORD=${out.OWNER_PASSWORD}\nDEMO_PASSWORD=${out.DEMO_PASSWORD}\n`,
+      `# Credenciales de PRUEBA para npm run dev (no se suben a git)\nOWNER_USERNAME=${out.OWNER_USERNAME}\nOWNER_PASSWORD=${out.OWNER_PASSWORD}\nDEMO_PASSWORD=${out.DEMO_PASSWORD}\nDATA_KEY=${out.DATA_KEY}\n`,
     )
   }
   return out

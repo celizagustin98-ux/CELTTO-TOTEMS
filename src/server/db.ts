@@ -1,15 +1,32 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { Kysely, MssqlDialect, PostgresDialect, SqliteDialect, sql } from 'kysely'
+import { Kysely, MssqlDialect, PostgresDialect, SqliteDialect, sql, type KyselyPlugin, type PluginTransformQueryArgs, type PluginTransformResultArgs, type QueryResult, type RootOperationNode, type UnknownRow } from 'kysely'
 import type { Config, DbClient } from './config.js'
 import type { Broadcaster } from './hub.js'
+import type { DataCrypto } from './crypto.js'
 import type { Database } from './types.js'
+
+/**
+ * Las columnas de fecha son tipos reales (timestamptz / datetimeoffset). Los drivers las devuelven como Date;
+ * este plugin las convierte a texto ISO para que la API y el código trabajen igual con cualquier motor.
+ */
+export class DateToIsoPlugin implements KyselyPlugin {
+  transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
+    return args.node
+  }
+  async transformResult(args: PluginTransformResultArgs): Promise<QueryResult<UnknownRow>> {
+    for (const row of args.result.rows) for (const k in row) if (row[k] instanceof Date) row[k] = (row[k] as Date).toISOString()
+    return args.result
+  }
+}
+const plugins = [new DateToIsoPlugin()]
 
 export interface Ctx {
   db: Kysely<Database>
   client: DbClient
   cfg: Config
   hub: Broadcaster
+  crypto: DataCrypto
 }
 
 export async function createDb(cfg: Config): Promise<{ db: Kysely<Database>; client: DbClient }> {
@@ -19,7 +36,7 @@ export async function createDb(cfg: Config): Promise<{ db: Kysely<Database>; cli
     const database = new SQLite(cfg.sqlitePath)
     database.pragma('journal_mode = WAL')
     database.pragma('foreign_keys = ON')
-    return { db: new Kysely<Database>({ dialect: new SqliteDialect({ database }) }), client: 'sqlite' }
+    return { db: new Kysely<Database>({ dialect: new SqliteDialect({ database }), plugins }), client: 'sqlite' }
   }
 
   if (cfg.client === 'postgres') {
@@ -40,7 +57,7 @@ export async function createDb(cfg: Config): Promise<{ db: Kysely<Database>; cli
     pool.on('error', (err) => {
       console.error('Postgres pool error', err.message)
     })
-    return { db: new Kysely<Database>({ dialect: new PostgresDialect({ pool }) }), client: 'postgres' }
+    return { db: new Kysely<Database>({ dialect: new PostgresDialect({ pool }), plugins }), client: 'postgres' }
   }
 
   const Tedious = await import('tedious')
@@ -64,7 +81,7 @@ export async function createDb(cfg: Config): Promise<{ db: Kysely<Database>; cli
         }),
     },
   })
-  return { db: new Kysely<Database>({ dialect }), client: 'mssql' }
+  return { db: new Kysely<Database>({ dialect, plugins }), client: 'mssql' }
 }
 
 export async function insertId(
