@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import { buildApp } from '../src/server/app.js'
 import { loadConfig } from '../src/server/config.js'
@@ -7,6 +9,9 @@ import { closeStaleTickets } from '../src/server/queue.js'
 import { hashPassword } from '../src/server/security.js'
 import { createCtx, runMigrations } from '../src/server/runtime.js'
 import { saveSettings } from '../src/server/settings.js'
+import { totpCode } from '../src/server/totp.js'
+import { persistDay } from '../src/server/stats.js'
+import { businessDate } from '../src/server/db.js'
 import { PGlite } from '@electric-sql/pglite'
 import { PGLiteSocketServer } from '@electric-sql/pglite-socket'
 
@@ -31,7 +36,7 @@ before(async () => {
   pgServer = new PGLiteSocketServer({ db: pg, port: PG_PORT, host: '127.0.0.1', maxConnections: 20 })
   await pgServer.start()
   ctx = await createCtx({
-    ...loadConfig({ DB_CLIENT: 'postgres', POSTGRES_HOST: '127.0.0.1', POSTGRES_PORT: String(PG_PORT), POSTGRES_DATABASE: 'postgres', POSTGRES_USER: 'postgres', POSTGRES_PASSWORD: 'postgres', PG_POOL_MIN: '0', LOG_HTTP: 'false', TICKET_RATE_PER_MIN: '1000' } as any),
+    ...loadConfig({ DB_CLIENT: 'postgres', POSTGRES_HOST: '127.0.0.1', POSTGRES_PORT: String(PG_PORT), POSTGRES_DATABASE: 'postgres', POSTGRES_USER: 'postgres', POSTGRES_PASSWORD: 'postgres', PG_POOL_MIN: '0', LOG_HTTP: 'false', TICKET_RATE_PER_MIN: '1000', MEDIA_DIR: join(tmpdir(), `celtto-test-media-${process.pid}`) } as any),
   })
   await runMigrations(ctx)
   await insertId(ctx, ctx.db, 'users', { username: 'dueno', display_name: 'Dueño', password_hash: await hashPassword('clave-dueno-1'), role: 'owner', sector_id: null, desk: null, active: 1, created_at: nowIso() })
@@ -221,13 +226,15 @@ describe('funcionalidad nueva', () => {
     const st = (await call('POST', '/api/admin/stations', owner, { kind: 'tv', name: 'TV A', sectorId: sectorA })).body
     const tv = (await call('GET', `/api/public/tv?deviceKey=${st.deviceKey}`)).body
     assert.deepEqual(tv.sectorIds, [sectorA])
-    assert.deepEqual(tv.settings.tv_media_urls, ['https://ejemplo.com/a.mp4'])
+    assert.deepEqual(tv.settings.tv_media, [{ url: 'https://ejemplo.com/a.mp4', kind: 'video' }])
   })
 
   test('el estado público del turno calcula personas adelante', async () => {
     await call('POST', '/api/public/tickets', '', { buttonId: btnB })
     const t = (await call('POST', '/api/public/tickets', '', { buttonId: btnB })).body
-    const s = (await call('GET', `/api/public/ticket/${t.code}`)).body
+    assert.match(t.qrPath, /^\/t\/[A-Za-z0-9_-]{16}$/)
+    assert.equal((await call('GET', `/api/public/ticket/${t.code}`)).status, 400)
+    const s = (await call('GET', `/api/public/ticket/${t.qrPath.slice(3)}`)).body
     assert.equal(s.status, 'waiting')
     assert.ok(s.waitingAhead >= 1)
   })
@@ -245,10 +252,13 @@ describe('pacientes', () => {
     const sinDatos = await call('POST', '/api/public/tickets', '', { buttonId: btnB, patient: { document: '30555444' } })
     assert.equal(sinDatos.status, 409)
     assert.equal(sinDatos.body.error, 'patient_not_found')
-    const ok = await call('POST', '/api/public/tickets', '', { buttonId: btnB, patient: { document: '30.555.444', firstName: 'juan   pablo', lastName: 'PÉREZ' } })
+    assert.equal((await call('POST', '/api/public/tickets', '', { buttonId: btnB, patient: { document: '30.555.444', firstName: 'juan', lastName: 'perez' } })).status, 400)
+    const ok = await call('POST', '/api/public/tickets', '', { buttonId: btnB, patient: { document: '30.555.444', firstName: 'juan   pablo', lastName: 'PÉREZ', consent: true } })
     assert.equal(ok.status, 200)
     assert.equal(ok.body.patientName, 'Juan')
-    const p = await ctx.db.selectFrom('patients').selectAll().where('document', '=', '30555444').executeTakeFirstOrThrow()
+    const p = await ctx.db.selectFrom('patients').selectAll().where('document_hash', '=', ctx.crypto.hash('30555444')).executeTakeFirstOrThrow()
+    assert.equal(p.document, null)
+    assert.equal(ctx.crypto.decrypt(p.document_enc), '30555444')
     assert.equal(p.first_name, 'Juan Pablo')
     assert.equal(p.last_name, 'Pérez')
     assert.equal(p.visits, 1)
@@ -260,12 +270,9 @@ describe('pacientes', () => {
     const t = (await call('POST', '/api/public/tickets', '', { buttonId: btnB, patient: { document: '30555444' } })).body
     const row = await ctx.db.selectFrom('tickets').select(['patient_id', 'dni']).where('id', '=', t.id).executeTakeFirstOrThrow()
     assert.ok(row.patient_id)
-    assert.equal(row.dni, '30555444')
-    const list = (await call('GET', '/api/admin/patients?q=perez', owner)).body
-    assert.equal(list.total, 1)
-    assert.equal(list.rows[0].visits, 2)
-    const detail = (await call('GET', `/api/admin/patients/${list.rows[0].id}`, owner)).body
-    assert.equal(detail.tickets.length, 2)
+    assert.equal(row.dni, null)
+    const p = await ctx.db.selectFrom('patients').select('visits').where('id', '=', row.patient_id!).executeTakeFirstOrThrow()
+    assert.equal(p.visits, 2)
   })
 
   test('la secretaria ve el nombre del paciente en la cola', async () => {
@@ -278,15 +285,6 @@ describe('pacientes', () => {
     assert.equal((await call('POST', '/api/public/patients/lookup', '', { document: '12' })).status, 400)
     assert.equal((await call('POST', '/api/public/tickets', '', { buttonId: btnB, patient: { document: '40111222', firstName: '<script>', lastName: 'X1' } })).status, 400)
   })
-
-  test('eliminar un paciente con turnos lo anonimiza', async () => {
-    const id = (await call('GET', '/api/admin/patients?q=30555444', owner)).body.rows[0].id
-    const r = (await call('DELETE', `/api/admin/patients/${id}`, owner)).body
-    assert.equal(r.anonymized, true)
-    const p = await ctx.db.selectFrom('patients').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
-    assert.equal(p.first_name, 'Paciente')
-    assert.equal(p.active, 0)
-  })
 })
 
 describe('prioridades opcionales', () => {
@@ -296,5 +294,109 @@ describe('prioridades opcionales', () => {
     const all = pub.sectors.flatMap((s: any) => s.buttons)
     assert.ok(!all.some((b: any) => b.id === btnPrio))
     assert.equal((await call('POST', '/api/public/tickets', '', { buttonId: btnPrio })).status, 404)
+  })
+})
+
+describe('roles y permisos', () => {
+  let supA = ''
+  test('el supervisor ve solo su área y no configura', async () => {
+    assert.equal((await call('POST', '/api/admin/users', owner, { username: 'super.a', displayName: 'Supervisora A', password: 'password123', role: 'supervisor', areaSectorIds: [sectorA] })).status, 200)
+    supA = await login('super.a', 'password123')
+    const ov = (await call('GET', '/api/admin/overview', supA)).body
+    assert.deepEqual(ov.sectors.map((s: any) => s.id), [sectorA])
+    assert.equal((await call('PUT', '/api/admin/settings', supA, { org_name: 'x' })).status, 403)
+    assert.equal((await call('POST', '/api/admin/sectors', supA, { name: 'X', color: '#111111' })).status, 403)
+    const users = (await call('GET', '/api/admin/users', supA)).body
+    assert.ok(users.every((u: any) => u.role === 'secretary' && u.sectorId === sectorA))
+  })
+
+  test('el supervisor no puede cancelar turnos de otra área', async () => {
+    const t = (await call('POST', '/api/public/tickets', '', { buttonId: btnB })).body
+    assert.equal((await call('POST', `/api/admin/tickets/${t.id}/cancel`, supA)).status, 403)
+  })
+
+  test('el auditor solo lee', async () => {
+    await call('POST', '/api/admin/users', owner, { username: 'auditor', displayName: 'Auditor', password: 'password123', role: 'auditor' })
+    const au = await login('auditor', 'password123')
+    assert.equal((await call('GET', '/api/admin/audit', au)).status, 200)
+    assert.equal((await call('GET', '/api/admin/productivity', au)).status, 200)
+    assert.equal((await call('POST', '/api/admin/day-close', au, {})).status, 403)
+  })
+
+  test('un administrador no puede crear administradores; el control maestro sí', async () => {
+    assert.equal((await call('POST', '/api/admin/users', owner, { username: 'admin.sis', displayName: 'Sistemas', password: 'password123', role: 'admin' })).status, 200)
+    const adm = await login('admin.sis', 'password123')
+    assert.equal((await call('POST', '/api/admin/users', adm, { username: 'admin.2', displayName: 'Otro', password: 'password123', role: 'admin' })).status, 403)
+    assert.equal((await call('POST', '/api/admin/users', adm, { username: 'sec.nueva', displayName: 'Nueva', password: 'password123', role: 'secretary', sectorId: sectorA })).status, 200)
+  })
+})
+
+describe('doble factor', () => {
+  test('activar, pedir el código al entrar y aceptar códigos de respaldo', async () => {
+    await call('POST', '/api/admin/users', owner, { username: 'mfa.user', displayName: 'MFA', password: 'password123', role: 'tech' })
+    const c = await login('mfa.user', 'password123')
+    const setup = (await call('POST', '/api/auth/mfa/setup', c)).body
+    assert.match(setup.otpauth, /^otpauth:\/\/totp\//)
+    assert.equal((await call('POST', '/api/auth/mfa/enable', c, { code: '000000' })).status, 400)
+    const en = (await call('POST', '/api/auth/mfa/enable', c, { code: totpCode(setup.secret) })).body
+    assert.equal(en.backupCodes.length, 8)
+    const step1 = (await call('POST', '/api/auth/login', '', { username: 'mfa.user', password: 'password123' })).body
+    assert.equal(step1.mfaRequired, true)
+    assert.equal((await call('POST', '/api/auth/mfa', '', { challenge: step1.challenge, code: '123456' })).status, 401)
+    const ok = await call('POST', '/api/auth/mfa', '', { challenge: step1.challenge, code: totpCode(setup.secret) })
+    assert.equal(ok.status, 200)
+    const step2 = (await call('POST', '/api/auth/login', '', { username: 'mfa.user', password: 'password123' })).body
+    assert.equal((await call('POST', '/api/auth/mfa', '', { challenge: step2.challenge, code: en.backupCodes[0] })).status, 200)
+    const step3 = (await call('POST', '/api/auth/login', '', { username: 'mfa.user', password: 'password123' })).body
+    assert.equal((await call('POST', '/api/auth/mfa', '', { challenge: step3.challenge, code: en.backupCodes[0] })).status, 401)
+  })
+
+  test('si el rol exige doble factor, sin activarlo no puede operar', async () => {
+    await call('PUT', '/api/admin/settings', owner, { mfa_required_roles: ['auditor'] })
+    const au = await login('auditor', 'password123')
+    const r = await call('GET', '/api/admin/audit', au)
+    assert.equal(r.status, 403)
+    assert.equal(r.body.error, 'mfa_setup_required')
+    assert.equal((await call('GET', '/api/auth/me', au)).body.mfaSetupRequired, true)
+    await call('PUT', '/api/admin/settings', owner, { mfa_required_roles: [] })
+  })
+})
+
+describe('multimedia', () => {
+  test('sube un MP4, valida la firma y lo sirve con rangos', async () => {
+    const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypmp42'), Buffer.alloc(200, 1)])
+    const up = await app.inject({ method: 'POST', url: '/api/admin/media?name=aviso.mp4', headers: { cookie: owner, 'content-type': 'video/mp4' }, payload: mp4 })
+    assert.equal(up.statusCode, 200)
+    const { url, kind } = JSON.parse(up.body)
+    assert.equal(kind, 'video')
+    const part = await app.inject({ method: 'GET', url, headers: { range: 'bytes=0-9' } })
+    assert.equal(part.statusCode, 206)
+    assert.equal(part.rawPayload.length, 10)
+    const fake = await app.inject({ method: 'POST', url: '/api/admin/media', headers: { cookie: owner, 'content-type': 'video/mp4' }, payload: Buffer.from('esto no es un video') })
+    assert.equal(fake.statusCode, 400)
+    const tv = (await call('GET', '/api/public/tv')).body
+    assert.ok(tv.settings.tv_media.some((m: any) => m.kind === 'video' && m.url === url))
+  })
+})
+
+describe('productividad y sin conexión', () => {
+  test('resumen diario y productividad por usuario', async () => {
+    const today = businessDate(ctx.cfg.timezone)
+    assert.ok((await persistDay(ctx, today)) > 0)
+    const p = (await call('GET', `/api/admin/productivity?from=${today}&to=${today}`, owner)).body
+    assert.ok(p.totals.issued > 0)
+    assert.ok(Array.isArray(p.users) && Array.isArray(p.sectors))
+    assert.equal(p.heatmap.length, 7)
+  })
+
+  test('sincroniza turnos emitidos sin conexión sin duplicarlos', async () => {
+    await call('PUT', '/api/admin/settings', owner, { totem_patient_mode: 'off' })
+    const body = { deviceKey: 'totem-offline-1', tickets: [{ ref: 'offline-ref-0001', buttonId: btnB, code: 'R-T9-001', createdAt: new Date(Date.now() - 60_000).toISOString() }] }
+    const r1 = (await call('POST', '/api/public/tickets/offline-sync', '', body)).body
+    assert.equal(r1.results[0].ok, true)
+    const r2 = (await call('POST', '/api/public/tickets/offline-sync', '', body)).body
+    assert.equal(r2.results[0].code, r1.results[0].code)
+    const n = await ctx.db.selectFrom('tickets').select('id').where('offline_ref', '=', 'offline-ref-0001').execute()
+    assert.equal(n.length, 1)
   })
 })

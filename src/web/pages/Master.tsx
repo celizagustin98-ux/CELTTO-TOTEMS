@@ -3,7 +3,7 @@ import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'reac
 import { useTranslation } from 'react-i18next'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  Armchair, BarChart3, ChevronRight, Contact, ExternalLink, Flag, Layers, LayoutGrid, LogOut, Menu, Monitor, ScrollText, Search,
+  Armchair, BarChart3, ChevronRight, ExternalLink, Flag, Layers, LayoutGrid, LogOut, Menu, Monitor, ScrollText, Search,
   Settings as Cog, Users, X, Command,
 } from 'lucide-react'
 import { LanguageSwitcher } from '../components/LanguageSwitcher'
@@ -21,7 +21,6 @@ import Priorities from './MasterPriorities'
 import Stations from './MasterStations'
 import Desks from './MasterDesks'
 import Audit from './MasterAudit'
-import Patients from './MasterPatients'
 
 const ALL: Role[] = ['owner', 'admin', 'tech']
 type NavItem = { to: string; end?: boolean; labelKey: string; icon: typeof LayoutGrid; roles: Role[]; hint: string; needsPriorities?: boolean }
@@ -30,7 +29,6 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
     title: 'Operación',
     items: [
       { to: '/master', end: true, labelKey: 'nav.overview', icon: LayoutGrid, roles: ALL, hint: 'Colas en vivo, alertas y turnos de hoy' },
-      { to: '/master/pacientes', labelKey: 'nav.patients', icon: Contact, roles: ALL, hint: 'Base de pacientes e historial de visitas' },
       { to: '/master/reportes', labelKey: 'nav.reports', icon: BarChart3, roles: ALL, hint: 'Tiempos de espera, atención y exportación' },
     ],
   },
@@ -190,7 +188,6 @@ export default function Master() {
               <motion.div key={loc.pathname} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.2, ease: 'easeOut' }}>
                 <Routes location={loc}>
                   <Route index element={<Overview />} />
-                  <Route path="pacientes" element={<Patients />} />
                   <Route path="secretarias" element={<Sectors />} />
                   <Route path="escritorios" element={<Desks />} />
                   <Route path="estaciones" element={<Stations />} />

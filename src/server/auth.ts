@@ -2,7 +2,9 @@ import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { Ctx } from './db.js'
 import { nowIso } from './db.js'
 import { HttpError } from './errors.js'
+import { can, type Perm } from './permissions.js'
 import { newToken, sha256 } from './security.js'
+import { getSettings } from './settings.js'
 import type { AuthUser, UserRole } from './types.js'
 
 declare module 'fastify' {
@@ -11,11 +13,7 @@ declare module 'fastify' {
   }
 }
 
-export const ROLES: UserRole[] = ['owner', 'admin', 'tech', 'secretary']
-/** Quién entra al panel maestro (lectura). */
-export const STAFF_ROLES: UserRole[] = ['owner', 'admin', 'tech']
-/** Quién puede modificar la configuración del sistema. */
-export const MANAGER_ROLES: UserRole[] = ['owner', 'admin']
+export const STAFF_ROLES: UserRole[] = ['owner', 'admin', 'supervisor', 'tech', 'auditor']
 
 export async function loadUser(ctx: Ctx, req: FastifyRequest): Promise<AuthUser | null> {
   const sid = req.cookies?.sid
@@ -23,7 +21,7 @@ export async function loadUser(ctx: Ctx, req: FastifyRequest): Promise<AuthUser 
   const r = await ctx.db
     .selectFrom('sessions')
     .innerJoin('users', 'users.id', 'sessions.user_id')
-    .select(['users.id', 'users.username', 'users.display_name', 'users.role', 'users.sector_id', 'users.desk', 'users.desk_id'])
+    .select(['users.id', 'users.username', 'users.display_name', 'users.role', 'users.sector_id', 'users.desk', 'users.desk_id', 'users.totp_enabled', 'users.site_id'])
     .where('sessions.token_hash', '=', sha256(sid))
     .where('sessions.expires_at', '>', nowIso())
     .where('users.active', '=', 1)
@@ -37,18 +35,36 @@ export async function loadUser(ctx: Ctx, req: FastifyRequest): Promise<AuthUser 
         sectorId: r.sector_id,
         deskId: r.desk_id,
         desk: r.desk,
+        mfaEnabled: r.totp_enabled === 1,
+        siteId: r.site_id,
       }
     : null
 }
 
-export const requireRole = (ctx: Ctx, ...roles: UserRole[]) => async (req: FastifyRequest, _reply: FastifyReply) => {
-  const u = await loadUser(ctx, req)
-  if (!u) throw new HttpError(401, 'Iniciá sesión para continuar')
-  if (!roles.includes(u.role)) throw new HttpError(403, 'No tenés permiso para esta acción')
-  req.user = u
+/** ¿Este rol tiene que usar doble factor según la configuración? */
+export async function mfaRequired(ctx: Ctx, role: UserRole) {
+  return (await getSettings(ctx)).mfa_required_roles.includes(role)
 }
 
-export const requireStaff = (ctx: Ctx) => requireRole(ctx, ...STAFF_ROLES)
+async function authenticate(ctx: Ctx, req: FastifyRequest) {
+  const u = await loadUser(ctx, req)
+  if (!u) throw new HttpError(401, 'Iniciá sesión para continuar')
+  // Si el rol exige doble factor y todavía no lo configuró, solo puede entrar a "Mi cuenta" a activarlo
+  if (!u.mfaEnabled && (await mfaRequired(ctx, u.role))) throw new HttpError(403, 'mfa_setup_required')
+  req.user = u
+  return u
+}
+
+export const requireRole = (ctx: Ctx, ...roles: UserRole[]) => async (req: FastifyRequest, _reply: FastifyReply) => {
+  const u = await authenticate(ctx, req)
+  if (!roles.includes(u.role)) throw new HttpError(403, 'No tenés permiso para esta acción')
+}
+
+/** Exige un permiso (ver permissions.ts). */
+export const requirePerm = (ctx: Ctx, perm: Perm) => async (req: FastifyRequest, _reply: FastifyReply) => {
+  const u = await authenticate(ctx, req)
+  if (!can(u, perm)) throw new HttpError(403, 'No tenés permiso para esta acción')
+}
 
 export async function openSession(ctx: Ctx, reply: FastifyReply, userId: number) {
   const token = newToken()
@@ -87,6 +103,8 @@ export async function closeOtherSessions(ctx: Ctx, userId: number, keepSid?: str
 }
 
 export async function purgeExpiredSessions(ctx: Ctx) {
-  const r = await ctx.db.deleteFrom('sessions').where('expires_at', '<=', nowIso()).executeTakeFirst()
+  const now = nowIso()
+  const r = await ctx.db.deleteFrom('sessions').where('expires_at', '<=', now).executeTakeFirst()
+  await ctx.db.deleteFrom('auth_challenges').where('expires_at', '<=', now).execute()
   return Number(r.numDeletedRows ?? 0)
 }

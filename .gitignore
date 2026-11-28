@@ -18,3 +18,5 @@ secrets/
 
 # Base local de desarrollo (npm run dev)
 data/pglite/
+data/media/
+data/backups/

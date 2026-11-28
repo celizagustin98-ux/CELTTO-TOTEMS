@@ -1,9 +1,11 @@
+import { randomBytes } from 'node:crypto'
 import type { Ctx } from './db.js'
 import { businessDate, insertId, nextCounterValue, nowIso } from './db.js'
 import { HttpError } from './errors.js'
 import { getSettings, mediaUrlList } from './settings.js'
 import type { AuthUser } from './types.js'
 import { registerVisit, resolvePatientForTicket, type PatientInput } from './patients.js'
+import { metrics } from './monitor.js'
 
 const today = (ctx: Ctx) => businessDate(ctx.cfg.timezone)
 const mins = (a?: string | null, b?: string | null) => (a && b ? (Date.parse(b) - Date.parse(a)) / 60000 : null)
@@ -28,7 +30,10 @@ export async function estimateWait(ctx: Ctx, sectorId: number, ahead: number): P
   return Math.max(1, Math.round((ahead * Math.max(service, 0.5)) / activeDesks))
 }
 
-export async function createTicket(ctx: Ctx, buttonId: number, patient?: PatientInput | null) {
+/** Datos de un turno emitido por el tótem mientras no tenía conexión. */
+export type OfflineTicket = { ref: string; code: string; createdAt: string }
+
+export async function createTicket(ctx: Ctx, buttonId: number, patient?: PatientInput | null, offline?: OfflineTicket) {
   const btn = await ctx.db.selectFrom('buttons').selectAll().where('id', '=', buttonId).where('active', '=', 1).executeTakeFirst()
   if (!btn) throw new HttpError(404, 'Este botón no está disponible')
   const sector = await ctx.db.selectFrom('sectors').selectAll().where('id', '=', btn.target_sector_id).where('active', '=', 1).executeTakeFirst()
@@ -43,18 +48,23 @@ export async function createTicket(ctx: Ctx, buttonId: number, patient?: Patient
   if (!settings.priorities_enabled && priorityWeight > 0) throw new HttpError(404, 'Este botón no está disponible')
   if (!settings.priorities_enabled) priorityWeight = 0
   // Identificación del paciente según la configuración del tótem
-  let pat: { id: number; document: string; first_name: string; last_name: string } | null = null
+  let pat: { id: number; first_name: string; last_name: string } | null = null
   if (settings.totem_patient_mode !== 'off' && patient?.document) pat = await resolvePatientForTicket(ctx, patient)
   else if (settings.totem_patient_mode === 'required') throw new HttpError(400, 'Ingresá tu número de documento')
-  const date = today(ctx)
-  const now = nowIso()
+  const now = offline?.createdAt ?? nowIso()
+  const date = offline ? businessDate(ctx.cfg.timezone, new Date(now)) : today(ctx)
+  const publicToken = randomBytes(12).toString('base64url')
   const t = await ctx.db.transaction().execute(async (trx) => {
-    const n = await nextCounterValue(ctx, trx, `${date}|${btn.prefix}`)
-    const code = `${btn.prefix}-${String(n).padStart(3, '0')}`
+    // En línea: número correlativo. Sin conexión: el código que imprimió el tótem (p. ej. A-T3-001)
+    const n = offline ? 0 : await nextCounterValue(ctx, trx, `${date}|${btn.prefix}`)
+    let code = offline ? offline.code : `${btn.prefix}-${String(n).padStart(3, '0')}`
+    if (offline && (await trx.selectFrom('tickets').select('id').where('business_date', '=', date).where('code', '=', code).executeTakeFirst()))
+      code = `${code.slice(0, 10)}${Math.floor(Math.random() * 90 + 10)}`.slice(0, 12)
     const id = await insertId(ctx, trx, 'tickets', {
       code, prefix: btn.prefix, number: n, business_date: date, button_id: btn.id, sector_id: sector.id, origin_sector_id: btn.sector_id,
       priority: priorityWeight, priority_id: priorityId, status: 'waiting', created_at: now, called_at: null, last_call_at: null, started_at: null, finished_at: null,
-      called_by: null, desk: null, desk_id: null, recall_count: 0, print_count: 0, dni: pat?.document ?? null, patient_id: pat?.id ?? null,
+      called_by: null, desk: null, desk_id: null, recall_count: 0, print_count: 0, dni: null, patient_id: pat?.id ?? null,
+      public_token: publicToken, offline_ref: offline?.ref ?? null, origin: offline ? 'offline' : 'online',
     })
     await trx.insertInto('ticket_events').values({ ticket_id: id, type: 'created', user_id: null, data: null, created_at: now }).execute()
     return { id, code, number: n }
@@ -64,6 +74,7 @@ export async function createTicket(ctx: Ctx, buttonId: number, patient?: Patient
     .where((eb) => eb.or([eb('priority', '>', priorityWeight), eb.and([eb('priority', '=', priorityWeight), eb('created_at', '<=', now)])]))
     .executeTakeFirstOrThrow()
   if (pat) await registerVisit(ctx, pat.id)
+  metrics.ticket()
   ctx.hub.broadcast({ type: 'queue', sectorIds: [sector.id] })
   const estimatedWaitMin = settings.wait_estimate_enabled ? await estimateWait(ctx, sector.id, Number(ahead.n)) : null
   return {
@@ -76,7 +87,7 @@ export async function createTicket(ctx: Ctx, buttonId: number, patient?: Patient
     waitingAhead: Number(ahead.n),
     estimatedWaitMin,
     createdAt: now,
-    qrPath: settings.qr_ticket_enabled ? `/t/${encodeURIComponent(t.code)}` : null,
+    qrPath: settings.qr_ticket_enabled ? `/t/${publicToken}` : null,
     patientName: pat ? pat.first_name.split(' ')[0] : null,
   }
 }
@@ -86,6 +97,7 @@ async function announce(ctx: Ctx, ticketId: number, recall: boolean) {
     .select(['tickets.id', 'tickets.code', 'tickets.prefix', 'tickets.number', 'tickets.desk', 'tickets.sector_id', 'sectors.name as sector_name', 'sectors.color'])
     .where('tickets.id', '=', ticketId).executeTakeFirst()
   if (!t) return
+  metrics.call()
   ctx.hub.broadcast({ type: 'call', recall, ticket: { id: t.id, code: t.code, prefix: t.prefix, number: t.number, desk: t.desk, sectorId: t.sector_id, sectorName: t.sector_name, color: t.color, at: nowIso() } })
   ctx.hub.broadcast({ type: 'queue', sectorIds: [t.sector_id] })
 }
@@ -194,10 +206,15 @@ export async function deskState(ctx: Ctx, u: AuthUser) {
   let current = null
   if (cur) {
     const b = await ctx.db.selectFrom('buttons').select('label').where('id', '=', cur.button_id).executeTakeFirst()
-    const p = cur.patient_id ? await ctx.db.selectFrom('patients').select(['id', 'first_name', 'last_name', 'document', 'document_type', 'visits', 'phone', 'notes']).where('id', '=', cur.patient_id).executeTakeFirst() : null
+    const p = cur.patient_id
+      ? await ctx.db.selectFrom('patients').select(['id', 'first_name', 'last_name', 'document_enc', 'document_type', 'visits', 'phone', 'notes', 'health_insurance', 'insurance_number']).where('id', '=', cur.patient_id).executeTakeFirst()
+      : null
     current = {
       id: cur.id, code: cur.code, status: cur.status, createdAt: cur.created_at, calledAt: cur.called_at, startedAt: cur.started_at, recallCount: cur.recall_count, buttonLabel: b?.label ?? '', dni: cur.dni,
-      patient: p ? { id: p.id, name: `${p.first_name} ${p.last_name}`, document: p.document, documentType: p.document_type, visits: p.visits, phone: p.phone, notes: p.notes } : null,
+      // La secretaria atiende en persona: ve el documento descifrado para verificar la identidad
+      patient: p
+        ? { id: p.id, name: `${p.first_name} ${p.last_name}`, document: ctx.crypto.decrypt(p.document_enc) ?? '—', documentType: p.document_type, visits: p.visits, phone: p.phone, notes: p.notes, healthInsurance: p.health_insurance, insuranceNumber: p.insurance_number }
+        : null,
     }
   }
   const stats = summarize((await dayRows(ctx, date, date)).filter((r) => r.sector_id === sid))
@@ -227,16 +244,19 @@ export async function setDesk(ctx: Ctx, u: AuthUser, deskId: number | null) {
   u.desk = d.name
 }
 
-export async function overview(ctx: Ctx) {
+/** scope: secretarías visibles (supervisor) o null para todas. */
+export async function overview(ctx: Ctx, scope: number[] | null = null) {
   const date = today(ctx)
-  const sectors = await ctx.db.selectFrom('sectors').select(['id', 'name', 'color']).where('active', '=', 1).orderBy('sort_order').orderBy('name').execute()
+  let sq = ctx.db.selectFrom('sectors').select(['id', 'name', 'color', 'site_id']).where('active', '=', 1)
+  if (scope) sq = sq.where('id', 'in', scope.length ? scope : [0])
+  const sectors = await sq.orderBy('sort_order').orderBy('name').execute()
   const rows = await dayRows(ctx, date, date)
   return { date, sectors: sectors.map((s) => ({ ...s, ...summarize(rows.filter((r) => r.sector_id === s.id)) })) }
 }
 
-export async function report(ctx: Ctx, from: string, to: string) {
-  const rows = await dayRows(ctx, from, to)
-  const sectors = await ctx.db.selectFrom('sectors').select(['id', 'name', 'color']).orderBy('sort_order').orderBy('name').execute()
+export async function report(ctx: Ctx, from: string, to: string, scope: number[] | null = null) {
+  const rows = (await dayRows(ctx, from, to)).filter((r) => !scope || scope.includes(r.sector_id))
+  const sectors = (await ctx.db.selectFrom('sectors').select(['id', 'name', 'color']).orderBy('sort_order').orderBy('name').execute()).filter((x) => !scope || scope.includes(x.id))
   const days = [...new Set(rows.map((r) => r.business_date))].sort()
   return {
     from, to, totals: summarize(rows),
@@ -258,15 +278,16 @@ export async function tvState(ctx: Ctx, sectorIds?: number[]) {
     .where('business_date', '=', date).where('status', '=', 'waiting').groupBy('sector_id').execute()
   const visible = sectorIds?.length ? sectors.filter((s) => sectorIds.includes(s.id)) : sectors
   const uploaded = settings.tv_media_enabled
-    ? (await ctx.db.selectFrom('assets').select('asset_key').where('asset_key', 'like', 'media:%').orderBy('updated_at').execute()).map((a) => `/api/public/media/${a.asset_key.slice(6)}`)
+    ? (await ctx.db.selectFrom('media').select(['file_key', 'kind']).where('active', '=', 1).orderBy('sort_order').orderBy('id').execute()).map((m) => ({ url: `/api/public/media/${m.file_key}`, kind: m.kind }))
     : []
+  const linked = mediaUrlList(settings).map((url) => ({ url, kind: /\.(mp4|webm|ogg)(\?|$)/i.test(url) ? 'video' : 'image' }))
   return {
     sectorIds: sectorIds ?? [],
     settings: {
       org_name: settings.org_name, brand_color: settings.brand_color,
       tv_voice_enabled: settings.tv_voice_enabled, tv_chime_enabled: settings.tv_chime_enabled, tv_voice_template: settings.tv_voice_template,
       tv_voice_rate: settings.tv_voice_rate, tv_chime_volume: settings.tv_chime_volume, tv_history_size: settings.tv_history_size,
-      tv_media_enabled: settings.tv_media_enabled, tv_media_urls: [...uploaded, ...mediaUrlList(settings)].slice(0, 30), tv_media_interval_sec: settings.tv_media_interval_sec,
+      tv_media_enabled: settings.tv_media_enabled, tv_media: [...uploaded, ...linked].slice(0, 50), tv_media_interval_sec: settings.tv_media_interval_sec,
       tv_layout: settings.tv_layout, tv_ticker: settings.tv_ticker,
     },
     recent: recent.map((t) => ({ id: t.id, code: t.code, prefix: t.prefix, number: t.number, desk: t.desk, sectorId: t.sector_id, sectorName: t.sector_name, color: t.color, at: t.last_call_at })),
@@ -274,28 +295,37 @@ export async function tvState(ctx: Ctx, sectorIds?: number[]) {
   }
 }
 
-/** Estado público de un turno (pantalla del QR). Solo turnos de hoy. */
-export async function ticketStatus(ctx: Ctx, code: string) {
-  const date = today(ctx)
+/**
+ * Panel privado del turno (se abre con el QR del ticket). Se busca por un token aleatorio, no por el código,
+ * para que nadie pueda ver los turnos de otros probando "A-001", "A-002"…
+ */
+export async function ticketStatus(ctx: Ctx, token: string) {
+  const since = businessDate(ctx.cfg.timezone, new Date(Date.now() - 86400_000))
   const t = await ctx.db.selectFrom('tickets').innerJoin('sectors', 'sectors.id', 'tickets.sector_id').leftJoin('buttons', 'buttons.id', 'tickets.button_id')
-    .select(['tickets.id', 'tickets.code', 'tickets.status', 'tickets.created_at', 'tickets.called_at', 'tickets.desk', 'tickets.sector_id', 'tickets.priority',
+    .select(['tickets.id', 'tickets.code', 'tickets.status', 'tickets.created_at', 'tickets.called_at', 'tickets.last_call_at', 'tickets.started_at', 'tickets.finished_at', 'tickets.desk', 'tickets.sector_id', 'tickets.priority', 'tickets.business_date',
       'sectors.name as sector_name', 'sectors.color as sector_color', 'buttons.label as button_label'])
-    .where('tickets.code', '=', code).where('tickets.business_date', '=', date).executeTakeFirst()
-  if (!t) throw new HttpError(404, 'Turno no encontrado para hoy')
+    .where('tickets.public_token', '=', token).where('tickets.business_date', '>=', since).executeTakeFirst()
+  if (!t) throw new HttpError(404, 'Turno no encontrado')
   let ahead = 0
   if (t.status === 'waiting') {
     const r = await ctx.db.selectFrom('tickets').select((eb) => eb.fn.countAll<number>().as('n'))
-      .where('sector_id', '=', t.sector_id).where('business_date', '=', date).where('status', '=', 'waiting').where('id', '!=', t.id)
+      .where('sector_id', '=', t.sector_id).where('business_date', '=', t.business_date).where('status', '=', 'waiting').where('id', '!=', t.id)
       .where((eb) => eb.or([eb('priority', '>', t.priority), eb.and([eb('priority', '=', t.priority), eb('created_at', '<=', t.created_at)])]))
       .executeTakeFirstOrThrow()
     ahead = Number(r.n)
   }
   const settings = await getSettings(ctx)
-  const estimatedWaitMin = settings.wait_estimate_enabled && t.status === 'waiting' ? await estimateWait(ctx, t.sector_id, ahead) : null
+  const estimatedWaitMin = t.status === 'waiting' && settings.wait_estimate_enabled ? await estimateWait(ctx, t.sector_id, ahead) : null
+  // Últimos llamados de su secretaría, para que el paciente vea cómo avanza la cola
+  const lastCalls = await ctx.db.selectFrom('tickets').select(['code', 'desk', 'last_call_at'])
+    .where('sector_id', '=', t.sector_id).where('business_date', '=', t.business_date).where('last_call_at', 'is not', null)
+    .orderBy('last_call_at', 'desc').limit(4).execute()
+  const logo = await ctx.db.selectFrom('assets').select('updated_at').where('asset_key', '=', 'logo').executeTakeFirst()
   return {
-    code: t.code, status: t.status, sectorId: t.sector_id, sectorName: t.sector_name, sectorColor: t.sector_color, desk: t.desk,
-    buttonLabel: t.button_label, waitingAhead: ahead, estimatedWaitMin, calledAt: t.called_at, createdAt: t.created_at,
-    orgName: settings.org_name,
+    code: t.code, status: t.status, sectorName: t.sector_name, sectorColor: t.sector_color, desk: t.desk, buttonLabel: t.button_label,
+    waitingAhead: ahead, estimatedWaitMin, createdAt: t.created_at, calledAt: t.last_call_at ?? t.called_at, startedAt: t.started_at, finishedAt: t.finished_at,
+    lastCalls: lastCalls.map((c) => ({ code: c.code, desk: c.desk, at: c.last_call_at })),
+    orgName: settings.org_name, brandColor: settings.brand_color, logoVersion: logo?.updated_at ?? null,
   }
 }
 

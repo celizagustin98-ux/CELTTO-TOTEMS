@@ -8,8 +8,8 @@ const avg = (xs: (number | null)[]) => {
   return v.length ? Math.round((v.reduce((s, x) => s + x, 0) / v.length) * 10) / 10 : null
 }
 
-export async function detailedReport(ctx: Ctx, from: string, to: string) {
-  const tickets = await ctx.db
+export async function detailedReport(ctx: Ctx, from: string, to: string, scope: number[] | null = null) {
+  let tq = ctx.db
     .selectFrom('tickets')
     .innerJoin('sectors', 'sectors.id', 'tickets.sector_id')
     .innerJoin('buttons', 'buttons.id', 'tickets.button_id')
@@ -34,8 +34,8 @@ export async function detailedReport(ctx: Ctx, from: string, to: string) {
     ])
     .where('tickets.business_date', '>=', from)
     .where('tickets.business_date', '<=', to)
-    .orderBy('tickets.id', 'asc')
-    .execute()
+  if (scope) tq = tq.where('tickets.sector_id', 'in', scope.length ? scope : [0])
+  const tickets = await tq.orderBy('tickets.id', 'asc').execute()
 
   const byStatus: Record<string, number> = {}
   const bySector: Record<string, { name: string; color: string; total: number; done: number; absent: number; waitTimes: (number | null)[]; serviceTimes: (number | null)[] }> = {}

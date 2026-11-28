@@ -3,11 +3,12 @@ import { loadConfig, type Config } from './config.js'
 import { createDb, type Ctx } from './db.js'
 import { createHub } from './hub.js'
 import { migrations } from './migrations.js'
+import { DataCrypto } from './crypto.js'
 
 export async function createCtx(cfg: Config = loadConfig()): Promise<Ctx> {
   const { db, client } = await createDb(cfg)
   const hub = await createHub(cfg.redisUrl, { maxClients: cfg.wsMaxClients, maxPerIp: cfg.wsMaxPerIp })
-  return { db, client, cfg, hub }
+  return { db, client, cfg, hub, crypto: new DataCrypto(cfg.dataKey) }
 }
 
 export const migrator = (ctx: Ctx) => new Migrator({ db: ctx.db, provider: { getMigrations: async () => migrations } })

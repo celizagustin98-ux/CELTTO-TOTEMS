@@ -46,8 +46,10 @@ async function main() {
       const existing = await ctx.db.selectFrom('users').select(['id', 'role']).where('username', '=', username).executeTakeFirst()
       if (existing) {
         if (existing.role !== 'owner') throw new Error('Ese usuario ya existe y no es dueño')
-        await ctx.db.updateTable('users').set({ password_hash: await hashPassword(password), active: 1 }).where('id', '=', existing.id).execute()
-        console.log(`Contraseña del dueño "${username}" actualizada.`)
+        // Acceso de emergencia: nueva contraseña y se quita el doble factor (por si se perdió el celular)
+        await ctx.db.updateTable('users').set({ password_hash: await hashPassword(password), active: 1, totp_enabled: 0, totp_secret_enc: null, totp_backup: null }).where('id', '=', existing.id).execute()
+        await ctx.db.deleteFrom('sessions').where('user_id', '=', existing.id).execute()
+        console.log(`Contraseña del dueño "${username}" actualizada y doble factor reiniciado.`)
       } else {
         await insertId(ctx, ctx.db, 'users', { username, display_name: 'Dueño', password_hash: await hashPassword(password), role: 'owner', sector_id: null, desk: null, active: 1, created_at: nowIso() })
         console.log(`Dueño "${username}" creado.`)
@@ -79,11 +81,23 @@ async function main() {
       for (const [u, n, s, d, dn] of [['secretaria.a', 'Laura Gómez', a, desks[a][0], 'Box 1'], ['secretaria.b', 'Martín Pérez', b, desks[b][0], 'Box 3']] as const)
         await insertId(ctx, ctx.db, 'users', { username: u, display_name: n, password_hash: await hashPassword(pass), role: 'secretary', sector_id: s, desk: dn, desk_id: d, active: 1, created_at: nowIso() })
       for (const [doc, fn, ln] of [['30111222', 'María', 'González'], ['28999888', 'Juan Carlos', 'Fernández'], ['40123456', 'Lucía', 'Martínez']] as const)
-        await insertId(ctx, ctx.db, 'patients', { document_type: 'DNI', document: doc, first_name: fn, last_name: ln, phone: null, email: null, birth_date: null, notes: null, search_name: searchKey(fn, ln), visits: 0, last_visit_at: null, source: 'panel', active: 1, created_at: nowIso(), updated_at: nowIso() })
+        await insertId(ctx, ctx.db, 'patients', { document_type: 'DNI', document: null, document_hash: ctx.crypto.hash(doc), document_enc: ctx.crypto.encrypt(doc), document_last4: doc.slice(-4), first_name: fn, last_name: ln, phone: null, email: null, birth_date: null, notes: null, search_name: searchKey(fn, ln), consent_at: nowIso(), consent_version: 'demo', visits: 0, last_visit_at: null, source: 'panel', active: 1, created_at: nowIso(), updated_at: nowIso() })
       await saveSettings(ctx, { org_name: 'Centro Médico Demo' })
       console.log(`Datos de demostración creados. Usuarios: secretaria.a / secretaria.b — contraseña: ${pass}`)
+    } else if (cmd === 'stats:rebuild') {
+      const { persistDay } = await import('./stats.js')
+      const from = arg('from')
+      const to = arg('to') ?? from
+      if (!from || !/^\d{4}-\d{2}-\d{2}$/.test(from)) throw new Error('Uso: stats:rebuild --from AAAA-MM-DD [--to AAAA-MM-DD]')
+      for (let d = new Date(`${from}T12:00:00Z`); d.toISOString().slice(0, 10) <= to!; d.setUTCDate(d.getUTCDate() + 1)) {
+        const day = d.toISOString().slice(0, 10)
+        console.log(`${day}: ${await persistDay(ctx, day)} filas`)
+      }
+    } else if (cmd === 'archive') {
+      const { archiveOld } = await import('./stats.js')
+      console.log(`${await archiveOld(ctx, Number(arg('months') ?? 13))} turnos archivados`)
     } else {
-      console.log('Comandos: migrate | owner:create [--user x --pass y] | seed:demo | db:check | db:script')
+      console.log('Comandos: migrate | owner:create [--user x --pass y] | seed:demo | db:check | db:script | stats:rebuild --from AAAA-MM-DD [--to …] | archive [--months 13]')
     }
   } finally { await ctx.db.destroy() }
 }

@@ -1,6 +1,9 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { closeOtherSessions, closeSession, loadUser, openSession } from './auth.js'
+import { closeOtherSessions, closeSession, loadUser, mfaRequired, openSession } from './auth.js'
+import { newBackupCodes, newTotpSecret, otpauthUrl, useBackupCode, verifyTotp } from './totp.js'
+import { newToken, sha256 } from './security.js'
+import { can } from './permissions.js'
 import type { Ctx } from './db.js'
 import { businessDate, insertId, nowIso } from './db.js'
 import { HttpError } from './errors.js'
@@ -53,18 +56,103 @@ export function publicRoutes(app: FastifyInstance, ctx: Ctx) {
       throw new HttpError(401, 'Usuario o contraseña incorrectos')
     }
     await loginLimiter.reset(`u:${username}`)
-    await openSession(ctx, reply, user.id)
-    await ctx.db.updateTable('users').set({ last_login_at: nowIso() }).where('id', '=', user.id).execute()
-    await audit(ctx, { userId: user.id, action: 'login.ok', ip: req.ip })
-    return {
-      id: user.id,
-      username: user.username,
-      displayName: user.display_name,
-      role: user.role,
-      sectorId: user.sector_id,
-      deskId: user.desk_id,
-      desk: user.desk,
+    // Con doble factor activo, la contraseña sola no alcanza: se pide el código del celular
+    if (user.totp_enabled === 1) {
+      const token = newToken()
+      await ctx.db.insertInto('auth_challenges').values({ token_hash: sha256(token), user_id: user.id, attempts: 0, expires_at: new Date(Date.now() + 5 * 60_000).toISOString() }).execute()
+      return { mfaRequired: true, challenge: token }
     }
+    return finishLogin(req, reply, user.id)
+  })
+
+  const finishLogin = async (req: any, reply: any, userId: number) => {
+    await openSession(ctx, reply, userId)
+    await ctx.db.updateTable('users').set({ last_login_at: nowIso() }).where('id', '=', userId).execute()
+    await audit(ctx, { userId, action: 'login.ok', ip: req.ip })
+    const u = await ctx.db.selectFrom('users').selectAll().where('id', '=', userId).executeTakeFirstOrThrow()
+    return {
+      id: u.id,
+      username: u.username,
+      displayName: u.display_name,
+      role: u.role,
+      sectorId: u.sector_id,
+      deskId: u.desk_id,
+      desk: u.desk,
+      mfaEnabled: u.totp_enabled === 1,
+      mfaSetupRequired: u.totp_enabled !== 1 && (await mfaRequired(ctx, u.role as any)),
+    }
+  }
+
+  /** Segundo paso del login: código de 6 dígitos o un código de respaldo. */
+  app.post('/api/auth/mfa', async (req, reply) => {
+    const b = z.object({ challenge: z.string().min(10).max(200), code: z.string().trim().min(6).max(20) }).parse(req.body)
+    if (!(await loginLimiter.hit(`mfa:${req.ip}`, 20, LOGIN_WINDOW_MS))) throw new HttpError(429, 'Demasiados intentos. Esperá unos minutos.')
+    const ch = await ctx.db.selectFrom('auth_challenges').selectAll().where('token_hash', '=', sha256(b.challenge)).where('expires_at', '>', nowIso()).executeTakeFirst()
+    if (!ch) throw new HttpError(401, 'El código venció. Volvé a ingresar usuario y contraseña.')
+    if (ch.attempts >= 5) {
+      await ctx.db.deleteFrom('auth_challenges').where('token_hash', '=', ch.token_hash).execute()
+      throw new HttpError(401, 'Demasiados códigos incorrectos. Volvé a ingresar usuario y contraseña.')
+    }
+    const u = await ctx.db.selectFrom('users').select(['id', 'totp_secret_enc', 'totp_backup', 'active']).where('id', '=', ch.user_id).executeTakeFirstOrThrow()
+    const secret = ctx.crypto.decrypt(u.totp_secret_enc)
+    let ok = !!secret && verifyTotp(secret, b.code)
+    if (!ok) {
+      const rest = useBackupCode(u.totp_backup, b.code)
+      if (rest) {
+        ok = true
+        await ctx.db.updateTable('users').set({ totp_backup: JSON.stringify(rest) }).where('id', '=', u.id).execute()
+        await audit(ctx, { userId: u.id, action: 'mfa.backup_used', detail: { left: rest.length }, ip: req.ip })
+      }
+    }
+    if (!ok || u.active !== 1) {
+      await ctx.db.updateTable('auth_challenges').set({ attempts: ch.attempts + 1 }).where('token_hash', '=', ch.token_hash).execute()
+      await audit(ctx, { userId: u.id, action: 'mfa.fail', ip: req.ip })
+      throw new HttpError(401, 'Código incorrecto')
+    }
+    await ctx.db.deleteFrom('auth_challenges').where('token_hash', '=', ch.token_hash).execute()
+    return finishLogin(req, reply, u.id)
+  })
+
+  /** Paso 1 de la activación: genera el secreto y la dirección para el QR (todavía no queda activo). */
+  app.post('/api/auth/mfa/setup', async (req) => {
+    const me = await loadUser(ctx, req)
+    if (!me) throw new HttpError(401, 'Sin sesión')
+    const secret = newTotpSecret()
+    await ctx.db.updateTable('users').set({ totp_pending_enc: ctx.crypto.encrypt(secret) }).where('id', '=', me.id).execute()
+    const org = (await getSettings(ctx)).org_name
+    return { secret, otpauth: otpauthUrl(secret, me.username, `CELTTO · ${org}`) }
+  })
+
+  /** Paso 2: confirma con un código y activa. Devuelve los códigos de respaldo (se muestran una sola vez). */
+  app.post('/api/auth/mfa/enable', async (req) => {
+    const me = await loadUser(ctx, req)
+    if (!me) throw new HttpError(401, 'Sin sesión')
+    const { code } = z.object({ code: z.string().trim().length(6) }).parse(req.body)
+    const row = await ctx.db.selectFrom('users').select('totp_pending_enc').where('id', '=', me.id).executeTakeFirstOrThrow()
+    const secret = ctx.crypto.decrypt(row.totp_pending_enc)
+    if (!secret || !verifyTotp(secret, code)) throw new HttpError(400, 'El código no coincide. Revisá la hora del celular y probá de nuevo.')
+    const backup = newBackupCodes()
+    await ctx.db
+      .updateTable('users')
+      .set({ totp_secret_enc: ctx.crypto.encrypt(secret), totp_pending_enc: null, totp_enabled: 1, totp_backup: JSON.stringify(backup.hashes) })
+      .where('id', '=', me.id)
+      .execute()
+    await closeOtherSessions(ctx, me.id, req.cookies?.sid)
+    await audit(ctx, { userId: me.id, action: 'mfa.enable', ip: req.ip })
+    return { ok: true, backupCodes: backup.codes }
+  })
+
+  app.post('/api/auth/mfa/disable', async (req) => {
+    const me = await loadUser(ctx, req)
+    if (!me) throw new HttpError(401, 'Sin sesión')
+    const b = z.object({ password: z.string().min(1).max(200), code: z.string().trim().min(6).max(20) }).parse(req.body)
+    if (await mfaRequired(ctx, me.role)) throw new HttpError(400, 'Tu rol exige doble factor: no se puede desactivar')
+    const row = await ctx.db.selectFrom('users').select(['password_hash', 'totp_secret_enc']).where('id', '=', me.id).executeTakeFirstOrThrow()
+    const secret = ctx.crypto.decrypt(row.totp_secret_enc)
+    if (!(await verifyPassword(b.password, row.password_hash)) || !secret || !verifyTotp(secret, b.code)) throw new HttpError(400, 'Contraseña o código incorrectos')
+    await ctx.db.updateTable('users').set({ totp_enabled: 0, totp_secret_enc: null, totp_backup: null }).where('id', '=', me.id).execute()
+    await audit(ctx, { userId: me.id, action: 'mfa.disable', ip: req.ip })
+    return { ok: true }
   })
 
   app.post('/api/auth/logout', async (req, reply) => {
@@ -77,7 +165,8 @@ export function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/auth/me', async (req) => {
     const u = await loadUser(ctx, req)
     if (!u) throw new HttpError(401, 'Sin sesión')
-    return u
+    const { ROLE_PERMS } = await import('./permissions.js')
+    return { ...u, permissions: ROLE_PERMS[u.role], mfaSetupRequired: !u.mfaEnabled && (await mfaRequired(ctx, u.role)), canAttend: can(u, 'desk.attend') }
   })
 
   app.put('/api/auth/password', async (req) => {
@@ -109,11 +198,9 @@ export function publicRoutes(app: FastifyInstance, ctx: Ctx) {
       .execute()
     const s = await getSettings(ctx)
     const logo = await ctx.db.selectFrom('assets').select('updated_at').where('asset_key', '=', 'logo').executeTakeFirst()
-    const media = await ctx.db.selectFrom('assets').select(['asset_key', 'updated_at']).where('asset_key', 'like', 'media:%').execute()
     return {
       settings: publicSettings(s),
       logoVersion: logo?.updated_at ?? null,
-      mediaCount: media.length,
       sectors: sectors.map((x) => ({
         id: x.id,
         name: x.name,
@@ -127,6 +214,7 @@ export function publicRoutes(app: FastifyInstance, ctx: Ctx) {
             subtitle: b.subtitle,
             color: b.color ?? x.color,
             icon: b.icon,
+            prefix: b.prefix,
             priorityName: s.priorities_enabled && b.priority > 0 ? b.priority_name : null,
             priority: b.priority,
           })),
@@ -167,17 +255,6 @@ export function publicRoutes(app: FastifyInstance, ctx: Ctx) {
       throw new HttpError(429, 'Este tótem emitió demasiados turnos. Esperá un momento.')
     }
     return createTicket(ctx, body.buttonId, body.patient)
-  })
-
-  // Imágenes de publicidad subidas desde el panel (se muestran en la TV)
-  app.get('/api/public/media/:key', async (req, reply) => {
-    const key = z.string().regex(/^[a-z0-9]{6,40}$/).parse((req.params as any).key)
-    const a = await ctx.db.selectFrom('assets').selectAll().where('asset_key', '=', `media:${key}`).executeTakeFirst()
-    if (!a) throw new HttpError(404, 'No encontrado')
-    reply.header('Content-Type', a.mime)
-    reply.header('Cache-Control', 'public, max-age=86400, immutable')
-    reply.header('Content-Security-Policy', "default-src 'none'")
-    return Buffer.from(a.data, 'base64')
   })
 
   // Reimpresión: solo turnos de hoy, con límite, para que no se pueda recorrer el historial
@@ -276,8 +353,53 @@ export function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     return tvState(ctx, ids)
   })
 
-  app.get('/api/public/ticket/:code', async (req) => {
-    const code = z.string().min(1).max(12).regex(/^[A-Za-z0-9-]+$/).parse((req.params as any).code).toUpperCase()
-    return ticketStatus(ctx, code)
+  app.get('/api/public/ticket/:token', async (req) => {
+    const token = z.string().regex(/^[A-Za-z0-9_-]{12,32}$/, 'Enlace inválido').parse((req.params as any).token)
+    if (!(await lookupLimiter.hit(`t:${req.ip}`, 240, 60_000))) throw new HttpError(429, 'Demasiadas consultas. Esperá un momento.')
+    return ticketStatus(ctx, token)
+  })
+
+  /**
+   * Sincroniza los turnos que el tótem emitió sin conexión. Es idempotente (offline_ref): si el tótem
+   * reintenta, no se duplican. Respeta la hora original para que entren a la cola en su orden real.
+   */
+  app.post('/api/public/tickets/offline-sync', async (req) => {
+    const b = z
+      .object({
+        deviceKey: z.string().min(4).max(64),
+        tickets: z
+          .array(
+            z.object({
+              ref: z.string().regex(/^[A-Za-z0-9_-]{8,40}$/),
+              buttonId: z.number().int().positive(),
+              code: z.string().regex(/^[A-Z0-9]{1,3}-T[0-9A-Z]{1,3}-\d{3}$/),
+              createdAt: z.string().datetime(),
+              patient: patientInput.optional(),
+            }),
+          )
+          .max(200),
+      })
+      .parse(req.body)
+    if (!(await ticketLimiter.hit(`sync:${b.deviceKey}`, 30, 60_000))) throw new HttpError(429, 'Demasiadas sincronizaciones. Esperá un momento.')
+    const results: { ref: string; ok: boolean; code?: string; error?: string }[] = []
+    const oldest = Date.now() - 24 * 3600_000
+    for (const t of b.tickets) {
+      const done = await ctx.db.selectFrom('tickets').select('code').where('offline_ref', '=', t.ref).executeTakeFirst()
+      if (done) { results.push({ ref: t.ref, ok: true, code: done.code }); continue }
+      const at = Date.parse(t.createdAt)
+      if (at < oldest || at > Date.now() + 60_000) { results.push({ ref: t.ref, ok: false, error: 'Fecha fuera de rango' }); continue }
+      try {
+        const r = await createTicket(ctx, t.buttonId, t.patient, { ref: t.ref, code: t.code, createdAt: new Date(at).toISOString() })
+        results.push({ ref: t.ref, ok: true, code: r.code })
+      } catch (e) {
+        // Paciente nuevo sin datos completos: se registra el turno sin identificar para no perderlo
+        if ((e as Error).message === 'patient_not_found') {
+          const r = await createTicket(ctx, t.buttonId, null, { ref: t.ref, code: t.code, createdAt: new Date(at).toISOString() }).catch((x) => x as Error)
+          results.push(r instanceof Error ? { ref: t.ref, ok: false, error: r.message } : { ref: t.ref, ok: true, code: r.code })
+        } else results.push({ ref: t.ref, ok: false, error: (e as Error).message })
+      }
+    }
+    await audit(ctx, { action: 'totem.offline_sync', detail: { device: b.deviceKey.slice(0, 12), count: b.tickets.length, ok: results.filter((r) => r.ok).length }, ip: req.ip })
+    return { results }
   })
 }

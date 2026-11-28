@@ -25,12 +25,22 @@ export const DEFAULT_SETTINGS = {
   priorities_enabled: false,
   totem_idle_enabled: true,
   totem_idle_seconds: 60,
-  qr_ticket_enabled: false,
+  qr_ticket_enabled: true,
   wait_estimate_enabled: true,
   wait_warn_min: 15,
   wait_danger_min: 30,
   ticket_footer: 'Aguarde a ser llamado. Gracias.',
   alert_queue_waiting: 25,
+  /** Texto chico impreso debajo del QR del ticket. */
+  ticket_qr_hint: 'Escaneá el código con tu celular para ver cuántos turnos faltan, el tiempo estimado y a qué box dirigirte. También podés seguir los llamados en la pantalla de la sala.',
+  /** Texto de consentimiento que acepta el paciente al registrarse en el tótem. */
+  consent_text: 'Acepto que mis datos se usen solo para gestionar mi atención en esta institución.',
+  /** Meses sin visitas tras los cuales se anonimizan los datos del paciente (0 = nunca). */
+  patient_retention_months: 24,
+  /** Meses que los turnos quedan en las tablas operativas antes de pasar al archivo histórico. */
+  archive_after_months: 13,
+  /** Roles que deben usar doble factor (código del celular) para entrar. */
+  mfa_required_roles: [] as string[],
 }
 export type Settings = typeof DEFAULT_SETTINGS
 
@@ -63,13 +73,28 @@ export const settingsPatch = z
     wait_danger_min: z.number().int().min(1).max(600),
     ticket_footer: z.string().max(160),
     alert_queue_waiting: z.number().int().min(5).max(500),
+    ticket_qr_hint: z.string().max(300),
+    consent_text: z.string().min(10).max(400),
+    patient_retention_months: z.number().int().min(0).max(240),
+    archive_after_months: z.number().int().min(3).max(120),
+    mfa_required_roles: z.array(z.enum(['owner', 'admin', 'supervisor', 'tech', 'auditor', 'secretary'])).max(6),
   })
   .partial()
   .refine((s) => s.wait_warn_min === undefined || s.wait_danger_min === undefined || s.wait_warn_min < s.wait_danger_min, {
     message: 'La espera "en alerta" tiene que ser menor que la "crítica"',
   })
 
+let cache: { at: number; ctx: Ctx; value: Settings } | null = null
+
+/** Configuración con caché de 5 s (se consulta en cada petición). Se invalida al guardar. */
 export async function getSettings(ctx: Ctx): Promise<Settings> {
+  if (cache && cache.ctx === ctx && Date.now() - cache.at < 5000) return cache.value
+  const value = await loadSettings(ctx)
+  cache = { at: Date.now(), ctx, value }
+  return value
+}
+
+async function loadSettings(ctx: Ctx): Promise<Settings> {
   const rows = await ctx.db.selectFrom('settings').selectAll().execute()
   const out: Record<string, unknown> = { ...DEFAULT_SETTINGS }
   for (const r of rows) {
@@ -84,6 +109,7 @@ export async function getSettings(ctx: Ctx): Promise<Settings> {
 }
 
 export async function saveSettings(ctx: Ctx, patch: Partial<Settings>) {
+  cache = null
   for (const [k, v] of Object.entries(patch)) {
     if (v === undefined) continue
     const val = JSON.stringify(v)
