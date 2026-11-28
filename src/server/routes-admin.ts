@@ -11,6 +11,9 @@ import { getSettings, saveSettings, settingsPatch } from './settings.js'
 import { audit } from './audit.js'
 import { detailedReport } from './reports.js'
 import type { UserRole } from './types.js'
+import { patientAdminBody, searchKey } from './patients.js'
+
+const BOM = '\uFEFF'
 
 const color = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Color inválido')
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida')
@@ -347,7 +350,8 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       .selectFrom('tickets')
       .innerJoin('sectors', 'sectors.id', 'tickets.sector_id')
       .innerJoin('buttons', 'buttons.id', 'tickets.button_id')
-      .select(['tickets.id', 'tickets.code', 'tickets.status', 'tickets.created_at', 'tickets.called_at', 'tickets.finished_at', 'tickets.desk', 'tickets.dni', 'sectors.name as sector_name', 'sectors.color as sector_color', 'buttons.label'])
+      .leftJoin('patients', 'patients.id', 'tickets.patient_id')
+      .select(['tickets.id', 'tickets.code', 'tickets.status', 'tickets.created_at', 'tickets.called_at', 'tickets.finished_at', 'tickets.desk', 'tickets.dni', 'tickets.patient_id', 'patients.first_name', 'patients.last_name', 'sectors.name as sector_name', 'sectors.color as sector_color', 'buttons.label'])
       .where('tickets.business_date', '=', date)
       .orderBy('tickets.id', 'desc')
       .limit(500)
@@ -355,6 +359,7 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return rows.map((r) => ({
       id: r.id, code: r.code, status: r.status, sectorName: r.sector_name, sectorColor: r.sector_color, label: r.label,
       createdAt: r.created_at, calledAt: r.called_at, finishedAt: r.finished_at, desk: r.desk, dni: r.dni,
+      patientId: r.patient_id, patientName: r.first_name ? `${r.first_name} ${r.last_name}` : null,
     }))
   })
 
@@ -613,5 +618,131 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       uptimeSec: Math.round(process.uptime()),
       version: ctx.cfg.version,
     }
+  })
+
+  // ---------- Pacientes ----------
+  const patientOut = (p: any) => ({
+    id: p.id, documentType: p.document_type, document: p.document, firstName: p.first_name, lastName: p.last_name, phone: p.phone, email: p.email,
+    birthDate: p.birth_date, notes: p.notes, visits: p.visits, lastVisitAt: p.last_visit_at, source: p.source, createdAt: p.created_at,
+  })
+  app.get('/api/admin/patients', staff, async (req) => {
+    const qy = req.query as any
+    const term = String(qy.q ?? '').trim().slice(0, 60)
+    const page = Math.max(1, Number(qy.page) || 1)
+    const size = Math.min(100, Math.max(10, Number(qy.size) || 25))
+    let q = ctx.db.selectFrom('patients').where('active', '=', 1)
+    if (term) {
+      const words = searchKey(term).split(' ').filter(Boolean)
+      const doc = term.replace(/[^0-9a-zA-Z]/g, '').toUpperCase()
+      // Cada palabra tiene que aparecer en el nombre (sin importar tildes ni mayúsculas), o el texto es un documento
+      q = q.where((eb) =>
+        eb.or([
+          eb.and(words.map((w) => eb('search_name', 'like', `%${w}%`))),
+          ...(doc.length >= 3 ? [eb('document', 'like', `${doc}%`)] : []),
+        ]),
+      )
+    }
+    const total = Number((await q.select((eb) => eb.fn.countAll<number>().as('n')).executeTakeFirstOrThrow()).n)
+    const rows = await q.selectAll().orderBy('last_visit_at', 'desc').orderBy('id', 'desc').limit(size).offset((page - 1) * size).execute()
+    const since = new Date(Date.now() - 30 * 86400_000).toISOString()
+    const recent = Number((await ctx.db.selectFrom('patients').select((eb) => eb.fn.countAll<number>().as('n')).where('active', '=', 1).where('created_at', '>=', since).executeTakeFirstOrThrow()).n)
+    return { total, page, size, newLast30: recent, rows: rows.map(patientOut) }
+  })
+  app.get('/api/admin/patients/export.csv', mgr, async (req, reply) => {
+    const rows = await ctx.db.selectFrom('patients').selectAll().where('active', '=', 1).orderBy('last_name').orderBy('first_name').execute()
+    const head = ['tipo', 'documento', 'apellido', 'nombre', 'telefono', 'email', 'nacimiento', 'visitas', 'ultima_visita', 'alta']
+    const lines = rows.map((p) => [p.document_type, p.document, p.last_name, p.first_name, p.phone, p.email, p.birth_date, p.visits, p.last_visit_at, p.created_at].map(csvCell).join(','))
+    await log(req, 'patients.export', 'patient')
+    reply.header('Content-Type', 'text/csv; charset=utf-8')
+    reply.header('Content-Disposition', 'attachment; filename="pacientes.csv"')
+    return BOM + head.join(',') + '\n' + lines.join('\n')
+  })
+  app.get('/api/admin/patients/:id', staff, async (req) => {
+    const id = idParam(req)
+    const p = await ctx.db.selectFrom('patients').selectAll().where('id', '=', id).executeTakeFirst()
+    if (!p) throw new HttpError(404, 'El paciente no existe')
+    const tickets = await ctx.db
+      .selectFrom('tickets')
+      .innerJoin('sectors', 'sectors.id', 'tickets.sector_id')
+      .innerJoin('buttons', 'buttons.id', 'tickets.button_id')
+      .leftJoin('users', 'users.id', 'tickets.called_by')
+      .select(['tickets.id', 'tickets.code', 'tickets.status', 'tickets.created_at', 'tickets.called_at', 'tickets.finished_at', 'tickets.desk', 'sectors.name as sector_name', 'sectors.color as sector_color', 'buttons.label', 'users.display_name as attended_by'])
+      .where('tickets.patient_id', '=', id)
+      .orderBy('tickets.id', 'desc')
+      .limit(50)
+      .execute()
+    return { ...patientOut(p), tickets }
+  })
+  app.post('/api/admin/patients', mgr, async (req) => {
+    const b = patientAdminBody.parse(req.body)
+    if (await ctx.db.selectFrom('patients').select('id').where('document', '=', b.document).where('document_type', '=', b.documentType).executeTakeFirst())
+      throw new HttpError(409, 'Ya existe un paciente con ese documento')
+    const now = nowIso()
+    const id = await insertId(ctx, ctx.db, 'patients', {
+      document_type: b.documentType, document: b.document, first_name: b.firstName, last_name: b.lastName, phone: b.phone || null, email: b.email || null,
+      birth_date: b.birthDate || null, notes: b.notes || null, search_name: searchKey(b.firstName, b.lastName), visits: 0, last_visit_at: null, source: 'panel', active: 1, created_at: now, updated_at: now,
+    })
+    await log(req, 'patient.create', 'patient', id)
+    return { id }
+  })
+  app.put('/api/admin/patients/:id', staff, async (req) => {
+    const id = idParam(req)
+    const b = patientAdminBody.parse(req.body)
+    const dup = await ctx.db.selectFrom('patients').select('id').where('document', '=', b.document).where('document_type', '=', b.documentType).where('id', '!=', id).executeTakeFirst()
+    if (dup) throw new HttpError(409, 'Ya existe otro paciente con ese documento')
+    const r = await ctx.db
+      .updateTable('patients')
+      .set({ document_type: b.documentType, document: b.document, first_name: b.firstName, last_name: b.lastName, phone: b.phone || null, email: b.email || null, birth_date: b.birthDate || null, notes: b.notes || null, search_name: searchKey(b.firstName, b.lastName), updated_at: nowIso() })
+      .where('id', '=', id)
+      .executeTakeFirst()
+    if (Number(r.numUpdatedRows) === 0) throw new HttpError(404, 'El paciente no existe')
+    await log(req, 'patient.update', 'patient', id)
+    return { ok: true }
+  })
+  app.delete('/api/admin/patients/:id', mgr, async (req) => {
+    const id = idParam(req)
+    const used = await ctx.db.selectFrom('tickets').select('id').where('patient_id', '=', id).limit(1).executeTakeFirst()
+    if (used) {
+      // Tiene turnos: se anonimiza para conservar las estadísticas sin datos personales
+      await ctx.db
+        .updateTable('patients')
+        .set({ active: 0, document: `BAJA${id}`, first_name: 'Paciente', last_name: 'eliminado', search_name: '', phone: null, email: null, birth_date: null, notes: null, updated_at: nowIso() })
+        .where('id', '=', id)
+        .execute()
+      await ctx.db.updateTable('tickets').set({ dni: null }).where('patient_id', '=', id).execute()
+    } else await ctx.db.deleteFrom('patients').where('id', '=', id).execute()
+    await log(req, 'patient.delete', 'patient', id)
+    return { ok: true, anonymized: Boolean(used) }
+  })
+
+  // ---------- Publicidad de la TV (imágenes subidas) ----------
+  const MEDIA_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
+  app.get('/api/admin/media', mgr, async () =>
+    (await ctx.db.selectFrom('assets').select(['asset_key', 'mime', 'updated_at']).where('asset_key', 'like', 'media:%').orderBy('updated_at').execute()).map((a) => ({
+      key: a.asset_key.slice(6),
+      mime: a.mime,
+      url: `/api/public/media/${a.asset_key.slice(6)}`,
+      uploadedAt: a.updated_at,
+    })),
+  )
+  app.post('/api/admin/media', mgr, async (req) => {
+    const { dataUrl } = z.object({ dataUrl: z.string().max(3_000_000) }).parse(req.body)
+    const m = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl)
+    if (!m || !MEDIA_MIMES.includes(m[1])) throw new HttpError(400, 'La imagen tiene que ser PNG, JPG, WEBP o GIF')
+    if (Buffer.from(m[2], 'base64').length > 2_000_000) throw new HttpError(400, 'Cada imagen puede pesar hasta 2 MB')
+    const count = Number((await ctx.db.selectFrom('assets').select((eb) => eb.fn.countAll<number>().as('n')).where('asset_key', 'like', 'media:%').executeTakeFirstOrThrow()).n)
+    if (count >= 20) throw new HttpError(400, 'Máximo 20 imágenes. Eliminá alguna para subir otra.')
+    const key = randomBytes(8).toString('hex')
+    await ctx.db.insertInto('assets').values({ asset_key: `media:${key}`, mime: m[1], data: m[2], updated_at: nowIso() }).execute()
+    await log(req, 'media.upload', 'media', key)
+    ctx.hub.broadcast({ type: 'config' })
+    return { key, url: `/api/public/media/${key}` }
+  })
+  app.delete('/api/admin/media/:key', mgr, async (req) => {
+    const key = z.string().regex(/^[a-z0-9]{6,32}$/).parse((req.params as any).key)
+    await ctx.db.deleteFrom('assets').where('asset_key', '=', `media:${key}`).execute()
+    await log(req, 'media.delete', 'media', key)
+    ctx.hub.broadcast({ type: 'config' })
+    return { ok: true }
   })
 }

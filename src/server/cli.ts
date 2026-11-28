@@ -4,6 +4,7 @@ import { insertId, nowIso } from './db.js'
 import { migrations } from './migrations.js'
 import { hashPassword } from './security.js'
 import { saveSettings } from './settings.js'
+import { searchKey } from './patients.js'
 import { createCtx, runMigrations } from './runtime.js'
 
 const [cmd, ...args] = process.argv.slice(2)
@@ -77,6 +78,8 @@ async function main() {
       const pass = process.env.DEMO_PASSWORD || 'demo12345'
       for (const [u, n, s, d, dn] of [['secretaria.a', 'Laura Gómez', a, desks[a][0], 'Box 1'], ['secretaria.b', 'Martín Pérez', b, desks[b][0], 'Box 3']] as const)
         await insertId(ctx, ctx.db, 'users', { username: u, display_name: n, password_hash: await hashPassword(pass), role: 'secretary', sector_id: s, desk: dn, desk_id: d, active: 1, created_at: nowIso() })
+      for (const [doc, fn, ln] of [['30111222', 'María', 'González'], ['28999888', 'Juan Carlos', 'Fernández'], ['40123456', 'Lucía', 'Martínez']] as const)
+        await insertId(ctx, ctx.db, 'patients', { document_type: 'DNI', document: doc, first_name: fn, last_name: ln, phone: null, email: null, birth_date: null, notes: null, search_name: searchKey(fn, ln), visits: 0, last_visit_at: null, source: 'panel', active: 1, created_at: nowIso(), updated_at: nowIso() })
       await saveSettings(ctx, { org_name: 'Centro Médico Demo' })
       console.log(`Datos de demostración creados. Usuarios: secretaria.a / secretaria.b — contraseña: ${pass}`)
     } else {

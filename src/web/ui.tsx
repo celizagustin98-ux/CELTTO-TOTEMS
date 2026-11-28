@@ -337,3 +337,77 @@ export function useHotkeys(map: Record<string, () => void>, enabled = true) {
     return () => window.removeEventListener('keydown', onKey)
   }, [enabled])
 }
+
+// ---------- Piezas SaaS ----------
+
+/** Número que sube animado hasta su valor (KPIs). */
+export function CountUp({ value, duration = 700, format = (n: number) => String(Math.round(n)) }: { value: number; duration?: number; format?: (n: number) => string }) {
+  const [shown, setShown] = useState(value)
+  const from = useRef(value)
+  useEffect(() => {
+    const start = performance.now()
+    const a = from.current
+    let raf = 0
+    const step = (t: number) => {
+      const k = Math.min(1, (t - start) / duration)
+      const eased = 1 - Math.pow(1 - k, 3)
+      setShown(a + (value - a) * eased)
+      if (k < 1) raf = requestAnimationFrame(step)
+      else from.current = value
+    }
+    raf = requestAnimationFrame(step)
+    return () => cancelAnimationFrame(raf)
+  }, [value, duration])
+  return <>{format(shown)}</>
+}
+
+export const Skeleton = ({ className = '' }: { className?: string }) => <div className={`skeleton ${className}`} aria-hidden />
+
+export function SkeletonPage() {
+  return (
+    <div className="space-y-6" role="status" aria-label="Cargando">
+      <Skeleton className="h-9 w-64" />
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-24" />)}
+      </div>
+      <Skeleton className="h-72" />
+    </div>
+  )
+}
+
+/** Control segmentado (2–4 opciones). */
+export function Segmented<T extends string>({ value, onChange, options, size = 'md' }: { value: T; onChange: (v: T) => void; options: { value: T; label: ReactNode }[]; size?: 'sm' | 'md' }) {
+  return (
+    <div className="inline-flex rounded-xl border border-line bg-paper p-1" role="radiogroup">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          role="radio"
+          aria-checked={value === o.value}
+          onClick={() => onChange(o.value)}
+          className={`relative rounded-lg font-medium transition-colors ${size === 'sm' ? 'px-2.5 py-1 text-[12.5px]' : 'px-3.5 py-1.5 text-[13.5px]'} ${value === o.value ? 'bg-surface text-ink shadow-sm ring-1 ring-line' : 'text-muted hover:text-ink'}`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/** Tarjeta de indicador con ícono, número animado y variación. */
+export function StatCard({ label, value, icon, hint, tone, format }: { label: string; value: number; icon?: ReactNode; hint?: ReactNode; tone?: 'ok' | 'warn' | 'danger' | 'brand'; format?: (n: number) => string }) {
+  const toneCls = tone === 'danger' ? 'bg-danger-soft text-danger' : tone === 'warn' ? 'bg-warn-soft text-warn' : tone === 'ok' ? 'bg-ok-soft text-ok' : 'bg-brand-soft text-brand'
+  return (
+    <div className="surface card-hover relative overflow-hidden p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="text-[13px] font-medium text-muted">{label}</div>
+        {icon && <span className={`grid h-8 w-8 place-items-center rounded-lg ${toneCls}`}>{icon}</span>}
+      </div>
+      <div className={`num mt-2 text-[2rem] leading-none ${tone === 'danger' ? 'text-danger' : tone === 'warn' ? 'text-warn' : ''}`}>
+        <CountUp value={value} format={format} />
+      </div>
+      {hint && <div className="mt-1.5 text-[12px] text-muted">{hint}</div>}
+    </div>
+  )
+}

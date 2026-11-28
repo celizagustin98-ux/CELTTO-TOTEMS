@@ -8,6 +8,7 @@ import { createTicket, ticketStatus, tvState } from './queue.js'
 import { RateLimiter, getDummyHash, hashPassword, safeEqual, verifyPassword } from './security.js'
 import { getSettings, publicSettings } from './settings.js'
 import { audit } from './audit.js'
+import { documentSchema, findPatient, greetingName, patientInput } from './patients.js'
 
 const LOGIN_MAX_PER_USER = 8
 const LOGIN_MAX_PER_IP = 30
@@ -18,6 +19,7 @@ export function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   const pinLimiter = new RateLimiter(ctx.hub.counters, 'pin')
   const loginLimiter = new RateLimiter(ctx.hub.counters, 'login')
   const reprintLimiter = new RateLimiter(ctx.hub.counters, 'reprint')
+  const lookupLimiter = new RateLimiter(ctx.hub.counters, 'lookup')
 
   app.get('/api/health', async (req, reply) => {
     const t0 = Date.now()
@@ -107,23 +109,25 @@ export function publicRoutes(app: FastifyInstance, ctx: Ctx) {
       .execute()
     const s = await getSettings(ctx)
     const logo = await ctx.db.selectFrom('assets').select('updated_at').where('asset_key', '=', 'logo').executeTakeFirst()
+    const media = await ctx.db.selectFrom('assets').select(['asset_key', 'updated_at']).where('asset_key', 'like', 'media:%').execute()
     return {
       settings: publicSettings(s),
       logoVersion: logo?.updated_at ?? null,
+      mediaCount: media.length,
       sectors: sectors.map((x) => ({
         id: x.id,
         name: x.name,
         color: x.color,
         welcomeMessage: x.welcome_message,
         buttons: buttons
-          .filter((b) => b.sector_id === x.id)
+          .filter((b) => b.sector_id === x.id && (s.priorities_enabled || b.priority <= 0))
           .map((b) => ({
             id: b.id,
             label: b.label,
             subtitle: b.subtitle,
             color: b.color ?? x.color,
             icon: b.icon,
-            priorityName: b.priority > 0 ? b.priority_name : null,
+            priorityName: s.priorities_enabled && b.priority > 0 ? b.priority_name : null,
             priority: b.priority,
           })),
       })),
@@ -139,12 +143,21 @@ export function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     return Buffer.from(a.data, 'base64')
   })
 
+  // El tótem consulta si el documento ya está registrado. Solo devuelve un saludo abreviado (nunca datos completos).
+  app.post('/api/public/patients/lookup', async (req) => {
+    const b = z.object({ document: documentSchema, deviceKey: z.string().min(4).max(64).optional() }).parse(req.body)
+    if (!(await lookupLimiter.hit(`ip:${req.ip}`, 120, 60_000)) || (b.deviceKey && !(await lookupLimiter.hit(`dev:${b.deviceKey}`, 40, 60_000))))
+      throw new HttpError(429, 'Demasiadas consultas. Esperá un momento.')
+    const p = await findPatient(ctx, b.document)
+    return p ? { found: true, greeting: greetingName(p.first_name, p.last_name) } : { found: false }
+  })
+
   app.post('/api/public/tickets', async (req) => {
     const body = z
       .object({
         buttonId: z.number().int().positive(),
         deviceKey: z.string().min(4).max(64).optional(),
-        dni: z.string().trim().max(20).regex(/^[\d.\s-]*$/, 'El documento solo puede tener números').optional(),
+        patient: patientInput.optional(),
       })
       .parse(req.body)
     if (!(await ticketLimiter.hit(`ip:${req.ip}`, ctx.cfg.ticketRatePerMinute, 60_000))) {
@@ -153,7 +166,18 @@ export function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     if (body.deviceKey && !(await ticketLimiter.hit(`dev:${body.deviceKey}`, ctx.cfg.ticketRatePerDevice, 60_000))) {
       throw new HttpError(429, 'Este tótem emitió demasiados turnos. Esperá un momento.')
     }
-    return createTicket(ctx, body.buttonId, body.dni)
+    return createTicket(ctx, body.buttonId, body.patient)
+  })
+
+  // Imágenes de publicidad subidas desde el panel (se muestran en la TV)
+  app.get('/api/public/media/:key', async (req, reply) => {
+    const key = z.string().regex(/^[a-z0-9]{6,40}$/).parse((req.params as any).key)
+    const a = await ctx.db.selectFrom('assets').selectAll().where('asset_key', '=', `media:${key}`).executeTakeFirst()
+    if (!a) throw new HttpError(404, 'No encontrado')
+    reply.header('Content-Type', a.mime)
+    reply.header('Cache-Control', 'public, max-age=86400, immutable')
+    reply.header('Content-Security-Policy', "default-src 'none'")
+    return Buffer.from(a.data, 'base64')
   })
 
   // Reimpresión: solo turnos de hoy, con límite, para que no se pueda recorrer el historial

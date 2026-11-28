@@ -6,6 +6,7 @@ import { insertId, nowIso } from '../src/server/db.js'
 import { closeStaleTickets } from '../src/server/queue.js'
 import { hashPassword } from '../src/server/security.js'
 import { createCtx, runMigrations } from '../src/server/runtime.js'
+import { saveSettings } from '../src/server/settings.js'
 import { PGlite } from '@electric-sql/pglite'
 import { PGLiteSocketServer } from '@electric-sql/pglite-socket'
 
@@ -34,6 +35,8 @@ before(async () => {
   })
   await runMigrations(ctx)
   await insertId(ctx, ctx.db, 'users', { username: 'dueno', display_name: 'Dueño', password_hash: await hashPassword('clave-dueno-1'), role: 'owner', sector_id: null, desk: null, active: 1, created_at: nowIso() })
+  // Los tests históricos emiten turnos sin identificar al paciente y con prioridades activas
+  await saveSettings(ctx, { totem_patient_mode: 'off', priorities_enabled: true })
   app = await buildApp(ctx)
   owner = await login('dueno', 'clave-dueno-1')
 })
@@ -221,17 +224,77 @@ describe('funcionalidad nueva', () => {
     assert.deepEqual(tv.settings.tv_media_urls, ['https://ejemplo.com/a.mp4'])
   })
 
-  test('el DNI se guarda solo si está habilitado', async () => {
-    await call('PUT', '/api/admin/settings', owner, { totem_dni_enabled: true })
-    const t = (await call('POST', '/api/public/tickets', '', { buttonId: btnB, dni: '30.123.456' })).body
-    const row = await ctx.db.selectFrom('tickets').select('dni').where('id', '=', t.id).executeTakeFirstOrThrow()
-    assert.equal(row.dni, '30123456')
-  })
-
   test('el estado público del turno calcula personas adelante', async () => {
+    await call('POST', '/api/public/tickets', '', { buttonId: btnB })
     const t = (await call('POST', '/api/public/tickets', '', { buttonId: btnB })).body
     const s = (await call('GET', `/api/public/ticket/${t.code}`)).body
     assert.equal(s.status, 'waiting')
     assert.ok(s.waitingAhead >= 1)
+  })
+})
+
+describe('pacientes', () => {
+  test('con identificación obligatoria, el turno exige documento', async () => {
+    await call('PUT', '/api/admin/settings', owner, { totem_patient_mode: 'required' })
+    const r = await call('POST', '/api/public/tickets', '', { buttonId: btnB })
+    assert.equal(r.status, 400)
+  })
+
+  test('documento desconocido: pide registro y después lo crea con nombre normalizado', async () => {
+    assert.deepEqual((await call('POST', '/api/public/patients/lookup', '', { document: '30.555.444' })).body, { found: false })
+    const sinDatos = await call('POST', '/api/public/tickets', '', { buttonId: btnB, patient: { document: '30555444' } })
+    assert.equal(sinDatos.status, 409)
+    assert.equal(sinDatos.body.error, 'patient_not_found')
+    const ok = await call('POST', '/api/public/tickets', '', { buttonId: btnB, patient: { document: '30.555.444', firstName: 'juan   pablo', lastName: 'PÉREZ' } })
+    assert.equal(ok.status, 200)
+    assert.equal(ok.body.patientName, 'Juan')
+    const p = await ctx.db.selectFrom('patients').selectAll().where('document', '=', '30555444').executeTakeFirstOrThrow()
+    assert.equal(p.first_name, 'Juan Pablo')
+    assert.equal(p.last_name, 'Pérez')
+    assert.equal(p.visits, 1)
+  })
+
+  test('documento conocido: saludo abreviado y turno vinculado al paciente', async () => {
+    const lk = (await call('POST', '/api/public/patients/lookup', '', { document: '30555444' })).body
+    assert.deepEqual(lk, { found: true, greeting: 'Juan P.' })
+    const t = (await call('POST', '/api/public/tickets', '', { buttonId: btnB, patient: { document: '30555444' } })).body
+    const row = await ctx.db.selectFrom('tickets').select(['patient_id', 'dni']).where('id', '=', t.id).executeTakeFirstOrThrow()
+    assert.ok(row.patient_id)
+    assert.equal(row.dni, '30555444')
+    const list = (await call('GET', '/api/admin/patients?q=perez', owner)).body
+    assert.equal(list.total, 1)
+    assert.equal(list.rows[0].visits, 2)
+    const detail = (await call('GET', `/api/admin/patients/${list.rows[0].id}`, owner)).body
+    assert.equal(detail.tickets.length, 2)
+  })
+
+  test('la secretaria ve el nombre del paciente en la cola', async () => {
+    await call('POST', '/api/admin/users', owner, { username: 'sec.b2', displayName: 'B2', password: 'password123', role: 'secretary', sectorId: sectorB })
+    const st = (await call('GET', '/api/desk/state', await login('sec.b2', 'password123'))).body
+    assert.ok(st.waiting.some((w: any) => w.patientName === 'Juan Pablo Pérez'))
+  })
+
+  test('rechaza documentos y nombres inválidos', async () => {
+    assert.equal((await call('POST', '/api/public/patients/lookup', '', { document: '12' })).status, 400)
+    assert.equal((await call('POST', '/api/public/tickets', '', { buttonId: btnB, patient: { document: '40111222', firstName: '<script>', lastName: 'X1' } })).status, 400)
+  })
+
+  test('eliminar un paciente con turnos lo anonimiza', async () => {
+    const id = (await call('GET', '/api/admin/patients?q=30555444', owner)).body.rows[0].id
+    const r = (await call('DELETE', `/api/admin/patients/${id}`, owner)).body
+    assert.equal(r.anonymized, true)
+    const p = await ctx.db.selectFrom('patients').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
+    assert.equal(p.first_name, 'Paciente')
+    assert.equal(p.active, 0)
+  })
+})
+
+describe('prioridades opcionales', () => {
+  test('con prioridades apagadas, el tótem no muestra ni acepta botones prioritarios', async () => {
+    await call('PUT', '/api/admin/settings', owner, { priorities_enabled: false, totem_patient_mode: 'off' })
+    const pub = (await call('GET', '/api/public/sectors')).body
+    const all = pub.sectors.flatMap((s: any) => s.buttons)
+    assert.ok(!all.some((b: any) => b.id === btnPrio))
+    assert.equal((await call('POST', '/api/public/tickets', '', { buttonId: btnPrio })).status, 404)
   })
 })

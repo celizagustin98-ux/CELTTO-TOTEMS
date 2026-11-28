@@ -35,7 +35,8 @@
     "openTotem": "Apri totem",
     "openTv": "Apri schermo sala",
     "logout": "Esci",
-    "master": "Pannello principale"
+    "master": "Pannello principale",
+    "patients": "Pazienti"
   },
   "totem": {
     "chooseSector": "Scegli lo sportello",
@@ -83,7 +84,9 @@
     "ago": "{{n}} min fa",
     "now": "adesso",
     "offline": "Offline — riconnessione",
-    "notConfigured": "TV non configurata"
+    "notConfigured": "TV non configurata",
+    "advertising": "Pubblicità",
+    "called": "Numero chiamato"
   },
   "ticket": {
     "yours": "Il tuo numero",
@@ -105,5 +108,31 @@
   },
   "voice": {
     "template": "Numero {prefix} {number}, recarsi a {place}"
+  },
+  "id": {
+    "title": "Inserisci il numero del documento",
+    "subtitle": "Lo usiamo per identificarti e velocizzare il servizio.",
+    "continue": "Continua",
+    "skip": "Continua senza documento",
+    "checking": "Ricerca…",
+    "invalid": "Controlla il numero: deve avere da 6 a 15 cifre"
+  },
+  "reg": {
+    "title": "È la tua prima visita",
+    "subtitle": "Compila i tuoi dati una sola volta. La prossima volta basterà il documento.",
+    "firstName": "Nome",
+    "lastName": "Cognome",
+    "document": "Documento",
+    "save": "Salva e continua",
+    "space": "Spazio",
+    "privacy": "I tuoi dati sono usati solo per gestire la tua visita."
+  },
+  "flow": {
+    "hello": "Ciao, {{name}}!",
+    "choose": "Scegli il motivo della visita",
+    "notYou": "Non sei tu?",
+    "step1": "Documento",
+    "step2": "Motivo",
+    "step3": "Numero"
   }
 }

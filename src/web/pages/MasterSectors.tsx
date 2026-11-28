@@ -17,6 +17,8 @@ export default function Sectors() {
   const canEdit = !!user && MANAGERS.includes(user.role)
   const { data, error, loading, reload, setData } = useLoad(() => api<Sector[]>('/api/admin/sectors'))
   const prios = useLoad(() => api<Priority[]>('/api/admin/priorities'))
+  const pub = useLoad(() => api<{ settings: { priorities_enabled: boolean } }>('/api/public/sectors'))
+  const prioOn = !!pub.data?.settings.priorities_enabled
   const [sf, setSf] = useState<SectorForm | null>(null)
   const [bf, setBf] = useState<BtnForm | null>(null)
   const [busy, setBusy] = useState(false)
@@ -92,7 +94,7 @@ export default function Sectors() {
   if (error) return <ErrorBox msg={error} retry={reload} />
   const sectors = data!
   const priorities = (prios.data ?? []).filter((p) => p.active)
-  const prioOf = (b: { priorityId: number | null }) => priorities.find((p) => p.id === b.priorityId)
+  const prioOf = (b: { priorityId: number | null }) => (prioOn ? priorities.find((p) => p.id === b.priorityId) : undefined)
   const preview = sectors.find((s) => s.id === previewId)
 
   return (
@@ -159,6 +161,7 @@ export default function Sectors() {
                             </span>
                           )}
                           {dest && dest.id !== s.id && <span>→ va a {dest.name}</span>}
+                          {!prioOn && (b.priority ?? 0) > 0 && <span className="badge badge-muted" title="Las prioridades están desactivadas en Configuración">Oculto en el tótem</span>}
                         </div>
                       </div>
                       {canEdit && (
@@ -201,7 +204,7 @@ export default function Sectors() {
                 <ExternalLink size={13} /> Abrir
               </a>
             </div>
-            <TotemPreview sector={preview} priorities={priorities} />
+            <TotemPreview sector={prioOn ? preview : { ...preview, buttons: preview.buttons.filter((b) => (b.priority ?? 0) <= 0) }} priorities={prioOn ? priorities : []} />
             <p className="mt-2 text-xs text-muted">Así ve el paciente la pantalla. Se actualiza al guardar cambios.</p>
           </aside>
         )}
@@ -253,11 +256,11 @@ export default function Sectors() {
             </div>
             <ButtonPreview f={bf} sectorColor={sectors.find((x) => x.id === bf.sectorId)?.color ?? '#2f6fed'} prio={prioOf(bf)} />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className={`grid gap-4 ${prioOn ? 'grid-cols-2' : 'grid-cols-1 sm:max-w-xs'}`}>
             <Field label="Letra del turno" hint="Genera A-001, A-002…">
               <input className={`${inputCls} uppercase`} maxLength={3} value={bf.prefix} onChange={(e) => setBf({ ...bf, prefix: e.target.value.replace(/[^a-zA-Z0-9]/g, '') })} placeholder="A" />
             </Field>
-            <Field label="Prioridad" hint="Las de mayor peso pasan adelante en la cola.">
+            {prioOn && <Field label="Prioridad" hint="Las de mayor peso pasan adelante en la cola.">
               <select className={inputCls} value={bf.priorityId ?? ''} onChange={(e) => setBf({ ...bf, priorityId: e.target.value ? Number(e.target.value) : null })}>
                 {priorities.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -265,7 +268,7 @@ export default function Sectors() {
                   </option>
                 ))}
               </select>
-            </Field>
+            </Field>}
           </div>
           <Field label="Ícono">
             <div className="flex flex-wrap gap-1.5">

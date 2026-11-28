@@ -35,7 +35,8 @@
     "openTotem": "Open kiosk",
     "openTv": "Open waiting-room display",
     "logout": "Sign out",
-    "master": "Admin panel"
+    "master": "Admin panel",
+    "patients": "Patients"
   },
   "totem": {
     "chooseSector": "Choose your sector",
@@ -83,7 +84,9 @@
     "ago": "{{n}} min ago",
     "now": "just now",
     "offline": "Offline — reconnecting",
-    "notConfigured": "TV not configured"
+    "notConfigured": "TV not configured",
+    "advertising": "Advertising",
+    "called": "Ticket called"
   },
   "ticket": {
     "yours": "Your ticket",
@@ -105,5 +108,31 @@
   },
   "voice": {
     "template": "Ticket {prefix} {number}, please go to {place}"
+  },
+  "id": {
+    "title": "Enter your ID number",
+    "subtitle": "We use it to identify you and speed up your visit.",
+    "continue": "Continue",
+    "skip": "Continue without ID",
+    "checking": "Searching…",
+    "invalid": "Check the number: it must have 6 to 15 digits"
+  },
+  "reg": {
+    "title": "This is your first visit",
+    "subtitle": "Fill in your details once. Next time you will only need your ID.",
+    "firstName": "First name",
+    "lastName": "Last name",
+    "document": "ID",
+    "save": "Save and continue",
+    "space": "Space",
+    "privacy": "Your data is used only to manage your visit."
+  },
+  "flow": {
+    "hello": "Hi, {{name}}!",
+    "choose": "Choose the reason for your visit",
+    "notYou": "Not you?",
+    "step1": "ID",
+    "step2": "Reason",
+    "step3": "Ticket"
   }
 }

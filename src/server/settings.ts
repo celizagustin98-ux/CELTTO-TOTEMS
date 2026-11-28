@@ -19,6 +19,10 @@ export const DEFAULT_SETTINGS = {
   totem_pin: '0000',
   totem_return_seconds: 10,
   totem_dni_enabled: false,
+  /** required: el paciente se identifica con su documento antes de sacar turno; optional: puede saltearlo; off: no se pide. */
+  totem_patient_mode: 'required' as 'required' | 'optional' | 'off',
+  /** Prioridades (atención preferencial, urgente…). Apagado: se ocultan en tótem y paneles. */
+  priorities_enabled: false,
   totem_idle_enabled: true,
   totem_idle_seconds: 60,
   qr_ticket_enabled: false,
@@ -49,6 +53,8 @@ export const settingsPatch = z
     totem_pin: z.string().regex(/^\d{4,8}$/, 'El PIN debe tener entre 4 y 8 números'),
     totem_return_seconds: z.number().int().min(3).max(60),
     totem_dni_enabled: z.boolean(),
+    totem_patient_mode: z.enum(['required', 'optional', 'off']),
+    priorities_enabled: z.boolean(),
     totem_idle_enabled: z.boolean(),
     totem_idle_seconds: z.number().int().min(15).max(900),
     qr_ticket_enabled: z.boolean(),

@@ -70,3 +70,13 @@ export function Kpi({ label, value, sub, tone }: { label: string; value: string 
     </div>
   )
 }
+
+/** Completa las horas sin turnos (por defecto de 7 a 20 h) para que el gráfico muestre la jornada completa. */
+export function fillHours(rows: { hour: string; count: number }[], from = 7, to = 20) {
+  const nums = rows.map((r) => Number(r.hour)).filter((n) => !Number.isNaN(n))
+  const a = Math.min(from, ...nums)
+  const b = Math.max(to, ...nums)
+  const out: { label: string; value: number }[] = []
+  for (let h = a; h <= b; h++) out.push({ label: `${h}h`, value: rows.find((r) => Number(r.hour) === h)?.count ?? 0 })
+  return out
+}
