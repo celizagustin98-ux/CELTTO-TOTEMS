@@ -2,10 +2,11 @@ import { randomBytes } from 'node:crypto'
 import type { Ctx } from './db.js'
 import { businessDate, insertId, nextCounterValue, nowIso } from './db.js'
 import { HttpError } from './errors.js'
-import { getSettings, mediaUrlList } from './settings.js'
+import { getSettings } from './settings.js'
 import type { AuthUser } from './types.js'
 import { registerVisit, resolvePatientForTicket, type PatientInput } from './patients.js'
 import { metrics } from './monitor.js'
+import { tvPlaylist } from './media.js'
 
 const today = (ctx: Ctx) => businessDate(ctx.cfg.timezone)
 const mins = (a?: string | null, b?: string | null) => (a && b ? (Date.parse(b) - Date.parse(a)) / 60000 : null)
@@ -220,7 +221,20 @@ export async function deskState(ctx: Ctx, u: AuthUser) {
   const stats = summarize((await dayRows(ctx, date, date)).filter((r) => r.sector_id === sid))
   const others = await ctx.db.selectFrom('sectors').select(['id', 'name', 'color']).where('active', '=', 1).where('id', '!=', sid).orderBy('sort_order').orderBy('name').execute()
   const desks = await ctx.db.selectFrom('desks').select(['id', 'name', 'code']).where('sector_id', '=', sid).where('active', '=', 1).orderBy('sort_order').orderBy('name').execute()
+  // Resumen personal del día: lo que atendió esta secretaria
+  const mineRows = await ctx.db.selectFrom('tickets').leftJoin('patients', 'patients.id', 'tickets.patient_id')
+    .select(['tickets.id', 'tickets.code', 'tickets.status', 'tickets.called_at', 'tickets.started_at', 'tickets.finished_at', 'patients.first_name', 'patients.last_name'])
+    .where('tickets.called_by', '=', u.id).where('tickets.business_date', '=', date).where('tickets.status', 'in', ['done', 'absent'])
+    .orderBy('tickets.finished_at', 'desc').execute()
+  const doneRows = mineRows.filter((r) => r.status === 'done')
+  const mine = {
+    done: doneRows.length,
+    absent: mineRows.length - doneRows.length,
+    avgServiceMin: avg(doneRows.map((r) => mins(r.started_at ?? r.called_at, r.finished_at))),
+    recent: mineRows.slice(0, 6).map((r) => ({ id: r.id, code: r.code, status: r.status, finishedAt: r.finished_at, patientName: r.first_name ? `${r.first_name} ${r.last_name}` : null })),
+  }
   return {
+    mine,
     user: { displayName: u.displayName, desk: u.desk, deskId: u.deskId }, sector, current,
     waiting: waiting.map((w) => ({ id: w.id, code: w.code, priority: w.priority, priorityName: settings.priorities_enabled && w.priority > 0 ? w.priority_name : null, priorityColor: w.priority_color, createdAt: w.created_at, buttonLabel: w.button_label, patientName: w.first_name ? `${w.first_name} ${w.last_name}` : null })),
     stats, transferTargets: others, desks, serverTime: nowIso(),
@@ -277,17 +291,14 @@ export async function tvState(ctx: Ctx, sectorIds?: number[]) {
   const counts = await ctx.db.selectFrom('tickets').select((eb) => ['sector_id', eb.fn.countAll<number>().as('n')])
     .where('business_date', '=', date).where('status', '=', 'waiting').groupBy('sector_id').execute()
   const visible = sectorIds?.length ? sectors.filter((s) => sectorIds.includes(s.id)) : sectors
-  const uploaded = settings.tv_media_enabled
-    ? (await ctx.db.selectFrom('media').select(['file_key', 'kind']).where('active', '=', 1).orderBy('sort_order').orderBy('id').execute()).map((m) => ({ url: `/api/public/media/${m.file_key}`, kind: m.kind }))
-    : []
-  const linked = mediaUrlList(settings).map((url) => ({ url, kind: /\.(mp4|webm|ogg)(\?|$)/i.test(url) ? 'video' : 'image' }))
+  const playlist = await tvPlaylist(ctx)
   return {
     sectorIds: sectorIds ?? [],
     settings: {
       org_name: settings.org_name, brand_color: settings.brand_color,
       tv_voice_enabled: settings.tv_voice_enabled, tv_chime_enabled: settings.tv_chime_enabled, tv_voice_template: settings.tv_voice_template,
       tv_voice_rate: settings.tv_voice_rate, tv_chime_volume: settings.tv_chime_volume, tv_history_size: settings.tv_history_size,
-      tv_media_enabled: settings.tv_media_enabled, tv_media: [...uploaded, ...linked].slice(0, 50), tv_media_interval_sec: settings.tv_media_interval_sec,
+      tv_media_enabled: settings.tv_media_enabled, tv_media: playlist, tv_media_interval_sec: settings.tv_media_interval_sec,
       tv_layout: settings.tv_layout, tv_ticker: settings.tv_ticker,
     },
     recent: recent.map((t) => ({ id: t.id, code: t.code, prefix: t.prefix, number: t.number, desk: t.desk, sectorId: t.sector_id, sectorName: t.sector_name, color: t.color, at: t.last_call_at })),

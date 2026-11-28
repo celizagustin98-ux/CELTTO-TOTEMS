@@ -13,6 +13,12 @@ export const DEFAULT_SETTINGS = {
   tv_media_enabled: false,
   tv_media_urls: '',
   tv_media_interval_sec: 20,
+  /** Reproducir todos los archivos de la carpeta compartida (MEDIA_SHARE_DIR). */
+  media_share_enabled: false,
+  /** Subcarpeta dentro de la carpeta compartida (vacío = la raíz). */
+  media_share_subdir: '',
+  /** Permitir subir archivos al servidor desde el panel (opcional; por defecto se usan direcciones). */
+  media_upload_enabled: false,
   tv_layout: 'split' as 'split' | 'media' | 'calls',
   tv_ticker: '',
   totem_auto_print: true,
@@ -57,6 +63,9 @@ export const settingsPatch = z
     tv_media_enabled: z.boolean(),
     tv_media_urls: z.string().max(4000),
     tv_media_interval_sec: z.number().int().min(5).max(300),
+    media_share_enabled: z.boolean(),
+    media_share_subdir: z.string().trim().max(120).regex(/^[\p{L}\p{N} ._\/-]*$/u, 'Subcarpeta inválida').refine((v) => !v.split(/[\\/]/).includes('..'), 'Subcarpeta inválida'),
+    media_upload_enabled: z.boolean(),
     tv_layout: z.enum(['split', 'media', 'calls']),
     tv_ticker: z.string().max(400),
     totem_auto_print: z.boolean(),

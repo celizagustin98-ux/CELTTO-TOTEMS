@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { tmpdir } from 'node:os'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import { buildApp } from '../src/server/app.js'
@@ -14,6 +15,13 @@ import { persistDay } from '../src/server/stats.js'
 import { businessDate } from '../src/server/db.js'
 import { PGlite } from '@electric-sql/pglite'
 import { PGLiteSocketServer } from '@electric-sql/pglite-socket'
+
+// Carpeta compartida simulada (en producción es una carpeta de otro servidor montada en este)
+const SHARE = join(tmpdir(), `celtto-test-share-${process.pid}`)
+mkdirSync(join(SHARE, 'tv'), { recursive: true })
+writeFileSync(join(SHARE, 'tv', '01-aviso.mp4'), Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypmp42'), Buffer.alloc(100, 2)]))
+writeFileSync(join(SHARE, 'tv', 'notas.txt'), 'no es multimedia')
+writeFileSync(join(SHARE, 'secreto.mp4'), Buffer.from('fuera de la subcarpeta'))
 
 // Los tests corren contra PostgreSQL real (PGlite embebido en memoria), el mismo motor que producción
 const PG_PORT = 55432 + Math.floor(Math.random() * 1000)
@@ -36,7 +44,7 @@ before(async () => {
   pgServer = new PGLiteSocketServer({ db: pg, port: PG_PORT, host: '127.0.0.1', maxConnections: 20 })
   await pgServer.start()
   ctx = await createCtx({
-    ...loadConfig({ DB_CLIENT: 'postgres', POSTGRES_HOST: '127.0.0.1', POSTGRES_PORT: String(PG_PORT), POSTGRES_DATABASE: 'postgres', POSTGRES_USER: 'postgres', POSTGRES_PASSWORD: 'postgres', PG_POOL_MIN: '0', LOG_HTTP: 'false', TICKET_RATE_PER_MIN: '1000', MEDIA_DIR: join(tmpdir(), `celtto-test-media-${process.pid}`) } as any),
+    ...loadConfig({ DB_CLIENT: 'postgres', POSTGRES_HOST: '127.0.0.1', POSTGRES_PORT: String(PG_PORT), POSTGRES_DATABASE: 'postgres', POSTGRES_USER: 'postgres', POSTGRES_PASSWORD: 'postgres', PG_POOL_MIN: '0', LOG_HTTP: 'false', TICKET_RATE_PER_MIN: '1000', MEDIA_DIR: join(tmpdir(), `celtto-test-media-${process.pid}`), MEDIA_SHARE_DIR: SHARE } as any),
   })
   await runMigrations(ctx)
   await insertId(ctx, ctx.db, 'users', { username: 'dueno', display_name: 'Dueño', password_hash: await hashPassword('clave-dueno-1'), role: 'owner', sector_id: null, desk: null, active: 1, created_at: nowIso() })
@@ -222,7 +230,9 @@ describe('seguridad', () => {
 
 describe('funcionalidad nueva', () => {
   test('la TV vinculada a una secretaría informa su filtro y la multimedia', async () => {
-    await call('PUT', '/api/admin/settings', owner, { tv_media_enabled: true, tv_media_urls: 'https://ejemplo.com/a.mp4\njavascript:alert(1)' })
+    await call('PUT', '/api/admin/settings', owner, { tv_media_enabled: true })
+    assert.equal((await call('POST', '/api/admin/media/url', owner, { url: 'javascript:alert(1)' })).status, 400)
+    assert.equal((await call('POST', '/api/admin/media/url', owner, { url: 'https://ejemplo.com/a.mp4', title: 'Aviso' })).status, 200)
     const st = (await call('POST', '/api/admin/stations', owner, { kind: 'tv', name: 'TV A', sectorId: sectorA })).body
     const tv = (await call('GET', `/api/public/tv?deviceKey=${st.deviceKey}`)).body
     assert.deepEqual(tv.sectorIds, [sectorA])
@@ -363,19 +373,43 @@ describe('doble factor', () => {
 })
 
 describe('multimedia', () => {
-  test('sube un MP4, valida la firma y lo sirve con rangos', async () => {
+  test('por dirección: sin extensión pide indicar el tipo; no se guarda nada en el servidor', async () => {
+    assert.equal((await call('POST', '/api/admin/media/url', owner, { url: 'http://192.168.1.20/publicidad/aviso' })).status, 400)
+    const r = await call('POST', '/api/admin/media/url', owner, { url: 'http://192.168.1.20/publicidad/aviso', kind: 'video' })
+    assert.equal(r.status, 200)
+    const list = (await call('GET', '/api/admin/media', owner)).body
+    assert.ok(list.items.some((m: any) => m.source === 'url' && m.url === 'http://192.168.1.20/publicidad/aviso' && m.kind === 'video'))
+  })
+
+  test('la subida al servidor está desactivada por defecto y se puede habilitar', async () => {
     const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypmp42'), Buffer.alloc(200, 1)])
+    const off = await app.inject({ method: 'POST', url: '/api/admin/media?name=aviso.mp4', headers: { cookie: owner, 'content-type': 'video/mp4' }, payload: mp4 })
+    assert.equal(off.statusCode, 403)
+    await call('PUT', '/api/admin/settings', owner, { media_upload_enabled: true })
     const up = await app.inject({ method: 'POST', url: '/api/admin/media?name=aviso.mp4', headers: { cookie: owner, 'content-type': 'video/mp4' }, payload: mp4 })
     assert.equal(up.statusCode, 200)
-    const { url, kind } = JSON.parse(up.body)
-    assert.equal(kind, 'video')
+    const { url } = JSON.parse(up.body)
     const part = await app.inject({ method: 'GET', url, headers: { range: 'bytes=0-9' } })
     assert.equal(part.statusCode, 206)
     assert.equal(part.rawPayload.length, 10)
     const fake = await app.inject({ method: 'POST', url: '/api/admin/media', headers: { cookie: owner, 'content-type': 'video/mp4' }, payload: Buffer.from('esto no es un video') })
     assert.equal(fake.statusCode, 400)
+  })
+
+  test('carpeta compartida: reproduce sus archivos sin copiarlos y no deja salir de la carpeta', async () => {
+    await call('PUT', '/api/admin/settings', owner, { media_share_enabled: true, media_share_subdir: 'tv' })
+    const m = (await call('GET', '/api/admin/media?refresh=1', owner)).body
+    assert.equal(m.share.configured, true)
+    assert.deepEqual(m.share.files.map((f: any) => f.name), ['01-aviso.mp4'])
     const tv = (await call('GET', '/api/public/tv')).body
-    assert.ok(tv.settings.tv_media.some((m: any) => m.kind === 'video' && m.url === url))
+    const shared = tv.settings.tv_media.find((x: any) => x.url.startsWith('/api/public/share/'))
+    assert.ok(shared && shared.kind === 'video')
+    const file = await app.inject({ method: 'GET', url: shared.url, headers: { range: 'bytes=4-7' } })
+    assert.equal(file.statusCode, 206)
+    assert.equal(file.rawPayload.toString('ascii'), 'ftyp')
+    assert.equal((await app.inject({ method: 'GET', url: '/api/public/share/..%2Fsecreto.mp4' })).statusCode, 404)
+    assert.equal((await app.inject({ method: 'GET', url: '/api/public/share/notas.txt' })).statusCode, 404)
+    assert.equal((await call('PUT', '/api/admin/settings', owner, { media_share_subdir: '../' })).status, 400)
   })
 })
 

@@ -38,7 +38,8 @@
     "master": "Admin panel",
     "sites": "Sites",
     "monitor": "Monitoring",
-    "account": "My account"
+    "account": "My account",
+    "media": "Advertising"
   },
   "totem": {
     "chooseSector": "Choose your sector",

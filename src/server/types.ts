@@ -204,7 +204,7 @@ export interface Database {
     archived_at: string
   }
   ticket_events_archive: { id: number; ticket_id: number; type: string; user_id: number | null; data: string | null; created_at: string }
-  media: { id: Generated<number>; file_key: string; kind: string; mime: string; size_bytes: number; original_name: string | null; sort_order: number; active: number; created_at: string }
+  media: { id: Generated<number>; file_key: string; kind: string; mime: string; size_bytes: number; original_name: string | null; sort_order: number; active: number; created_at: string; source: string; url: string | null; title: string | null }
 }
 
 export interface AuthUser {
