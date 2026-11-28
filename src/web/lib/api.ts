@@ -39,6 +39,9 @@ export interface Settings {
   tv_media_enabled: boolean
   tv_media_urls: string
   tv_media_interval_sec: number
+  media_share_enabled: boolean
+  media_share_subdir: string
+  media_upload_enabled: boolean
   tv_layout: 'split' | 'media' | 'calls'
   tv_ticker: string
   totem_auto_print: boolean

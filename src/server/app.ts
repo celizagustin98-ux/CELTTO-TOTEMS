@@ -16,8 +16,9 @@ const CSP = [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: https:",
-  "media-src 'self' https:",
+  // La publicidad puede venir de servidores de la red interna por http
+  "img-src 'self' data: blob: https: http:",
+  "media-src 'self' blob: https: http:",
   "font-src 'self' data:",
   "connect-src 'self' ws: wss:",
   "frame-ancestors 'none'",

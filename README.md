@@ -112,6 +112,12 @@ El servidor valida cada permiso; el panel solo oculta lo que no corresponde. En 
 - Respaldos automáticos diarios + recuperación a un momento puntual: ver `deploy/linux/BACKUPS.md`.
 - Monitoreo en *Panel → Monitoreo* y métricas Prometheus en `/api/metrics` (con `METRICS_TOKEN`).
 
+## Publicidad de la TV
+
+Las imágenes y videos (MP4/WEBM) se cargan **por dirección (URL)** o desde una **carpeta compartida de otro servidor**,
+así no se guarda nada en este servidor. Subir archivos desde el panel es opcional (se habilita en *Publicidad*).
+Guía para montar la carpeta compartida: `deploy/linux/PUBLICIDAD.md`.
+
 ## Tótem sin conexión
 
 Si se corta la red, el tótem sigue emitiendo e imprimiendo turnos con numeración propia (por ejemplo `A-T3-001`),

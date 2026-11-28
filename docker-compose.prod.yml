@@ -60,6 +60,7 @@ services:
     volumes:
       - celtto_media:/app/data/media
       - celtto_backups:/backups:ro
+      - ${MEDIA_SHARE_HOST:-./publicidad}:/mnt/publicidad:ro
     depends_on:
       db:
         condition: service_healthy
@@ -69,6 +70,8 @@ services:
       NODE_ENV: production
       DATA_KEY: ${DATA_KEY:?Definí DATA_KEY en .env (32+ caracteres, guardala junto con los respaldos)}
       MEDIA_DIR: /app/data/media
+      # Carpeta compartida de otro servidor con la publicidad (ver deploy/linux/PUBLICIDAD.md)
+      MEDIA_SHARE_DIR: /mnt/publicidad
       BACKUP_DIR: /backups
       METRICS_TOKEN: ${METRICS_TOKEN:-}
       TRUST_PROXY: "1"

@@ -227,49 +227,8 @@ export default function SettingsPage() {
         </Field>
       </Section>
 
-      <Section title="Publicidad en la TV" hint="Imágenes y videos MP4 que rotan en el recuadro de publicidad del llamador. Cuando llaman un turno, el llamado aparece encima y queda siempre visible al costado.">
-        <Toggle checked={!!s.tv_media_enabled} onChange={(v) => set('tv_media_enabled', v)} label="Mostrar publicidad en la TV" />
-        <input ref={mediaFile} type="file" multiple accept={MEDIA_ACCEPT} className="hidden" onChange={(e) => e.target.files?.length && void uploadMedia(e.target.files)} />
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-          {(media.data ?? []).map((m, i, all) => (
-            <div key={m.id} className="group relative aspect-video overflow-hidden rounded-xl border border-line bg-black">
-              {m.kind === 'video' ? <video src={m.url} className="h-full w-full object-cover" muted preload="metadata" /> : <img src={m.url} alt="" className="h-full w-full object-cover transition group-hover:scale-105" />}
-              <span className="absolute left-2 top-2 rounded-md bg-black/60 px-1.5 py-0.5 text-[10.5px] font-semibold uppercase text-white">{m.kind === 'video' ? 'Video' : 'Imagen'} · {i + 1}</span>
-              <div className="absolute inset-x-0 bottom-0 flex items-center gap-1 bg-gradient-to-t from-black/80 to-transparent p-2 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
-                <span className="min-w-0 flex-1 truncate text-[11px] text-white/85">{m.name ?? ''}</span>
-                <button onClick={() => void moveMedia(m, -1)} disabled={i === 0} className="grid h-7 w-7 place-items-center rounded-md bg-white/15 text-white disabled:opacity-30" aria-label="Mover antes">‹</button>
-                <button onClick={() => void moveMedia(m, 1)} disabled={i === all.length - 1} className="grid h-7 w-7 place-items-center rounded-md bg-white/15 text-white disabled:opacity-30" aria-label="Mover después">›</button>
-                <button onClick={() => void removeMedia(m)} className="grid h-7 w-7 place-items-center rounded-md bg-red-500/80 text-white" aria-label="Eliminar"><Trash2 size={13} /></button>
-              </div>
-            </div>
-          ))}
-          <button
-            type="button"
-            onClick={() => mediaFile.current?.click()}
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => { e.preventDefault(); if (e.dataTransfer.files.length) void uploadMedia(e.dataTransfer.files) }}
-            disabled={!!uploading}
-            className="relative flex aspect-video flex-col items-center justify-center gap-1.5 overflow-hidden rounded-xl border-2 border-dashed border-line text-muted transition hover:border-brand hover:bg-brand-soft/40 hover:text-brand"
-          >
-            {uploading ? (
-              <>
-                <span className="text-[13px] font-medium">Subiendo… {uploading.pct}%</span>
-                <span className="max-w-[90%] truncate text-[11px]">{uploading.name}</span>
-                <span className="absolute inset-x-0 bottom-0 h-1 bg-line"><span className="block h-full bg-brand transition-all" style={{ width: `${uploading.pct}%` }} /></span>
-              </>
-            ) : (
-              <>
-                <ImagePlus size={22} />
-                <span className="text-[13px] font-medium">Subir imágenes o videos</span>
-                <span className="text-[11px]">MP4/WEBM hasta 200 MB · imágenes hasta 5 MB</span>
-              </>
-            )}
-          </button>
-        </div>
-        <Field label="Videos o imágenes por dirección (opcional)" hint="Una dirección http/https por línea.">
-          <textarea className={inputCls} rows={2} value={s.tv_media_urls || ''} onChange={(e) => set('tv_media_urls', e.target.value)} placeholder="https://ejemplo.com/aviso.mp4" />
-        </Field>
-        <Field label="Segundos por imagen" hint="Los videos se reproducen completos antes de pasar al siguiente."><input type="number" min={5} max={300} className={`${inputCls} max-w-40`} value={s.tv_media_interval_sec || 20} onChange={(e) => set('tv_media_interval_sec', Number(e.target.value))} /></Field>
+      <Section title="Publicidad en la TV" hint="Las imágenes y videos se administran en la sección Publicidad.">
+        <a href="/master/publicidad" className="inline-flex items-center gap-2 text-[14px] font-medium text-brand hover:underline">Ir a Publicidad →</a>
       </Section>
 
       <Section title="Identificación del paciente" hint="Cómo se identifica el paciente en el tótem antes de sacar turno.">

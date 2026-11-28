@@ -47,8 +47,10 @@ export interface Config {
   trustProxy: boolean | number
   /** Clave maestra para cifrar datos personales (DNI, doble factor). */
   dataKey: string
-  /** Carpeta de archivos de publicidad (imágenes y videos). */
+  /** Carpeta de archivos de publicidad subidos desde el panel (opcional). */
   mediaDir: string
+  /** Carpeta compartida de otro servidor, montada en este (ej. /mnt/publicidad o \\\\servidor\\publicidad). */
+  mediaShareDir?: string
   /** Carpeta donde el servicio de respaldo deja su estado (solo lectura para la app). */
   backupDir: string
   metricsToken?: string
@@ -142,6 +144,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     version,
     dataKey,
     mediaDir: env.MEDIA_DIR || `${root}data/media`,
+    mediaShareDir: env.MEDIA_SHARE_DIR?.trim() || undefined,
     backupDir: env.BACKUP_DIR || `${root}data/backups`,
     metricsToken: env.METRICS_TOKEN || undefined,
     wsMaxClients: Number(env.WS_MAX_CLIENTS ?? 2000),

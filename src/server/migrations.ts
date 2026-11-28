@@ -482,4 +482,13 @@ export const migrations: Record<string, Migration> = {
         .execute()
     },
   },
+
+  /** 006: la publicidad puede venir de una dirección (URL) o de una carpeta compartida; subir archivos es opcional. */
+  '006_media_sources': {
+    async up(db: Kysely<any>) {
+      await db.schema.alterTable('media').addColumn('source', 'varchar(10)', (c) => c.notNull().defaultTo('upload')).execute()
+      await db.schema.alterTable('media').addColumn('url', 'varchar(1000)').execute()
+      await db.schema.alterTable('media').addColumn('title', 'varchar(120)').execute()
+    },
+  },
 }
