@@ -31,7 +31,7 @@ marca ausente o deriva. La TV muestra el llamado en el color de la secretaría, 
 ```bash
 # 1. Configuración
 cp .env.example .env
-# Completá POSTGRES_PASSWORD y SESSION_SECRET (32+ caracteres) en .env
+# Completá POSTGRES_PASSWORD, SESSION_SECRET y DATA_KEY (32+ caracteres cada una) en .env
 
 # 2. Levantar PostgreSQL + aplicación
 docker compose up -d --build
@@ -83,19 +83,39 @@ npm run build      # compilación de producción
 - Al entrar al tótem, el paciente ingresa su **documento** con el teclado en pantalla.
 - Si ya está registrado, lo saluda ("¡Hola, María G.!") y pasa a los botones.
 - Si no existe, completa **nombre y apellido** (teclado alfabético en pantalla) y queda registrado.
-- La secretaria ve nombre, documento, visitas y observaciones; el panel maestro tiene la base de pacientes
-  con búsqueda (sin importar tildes), ficha con historial y exportación.
+- La secretaria ve nombre, documento, visitas y observaciones, y puede completar teléfono y obra social.
+- El ticket impreso trae un **QR privado**: abre en el celular cuántos turnos faltan, el tiempo estimado y el box al que ir.
 - La TV **nunca** muestra nombres, solo el código del turno.
 - En Configuración → Identificación del paciente: obligatoria, opcional o desactivada.
 
-## Roles
+## Roles y permisos
 
 | Rol | Puede |
 |---|---|
-| Dueño | Todo. Se crea por consola (`owner:create`) |
-| Administrador | Todo, salvo administrar al dueño o a otros administradores |
-| Técnico | Ver el panel maestro y administrar tótems y TVs; no cambia configuración ni usuarios |
-| Secretaria | Atender la cola de su secretaría desde `/panel` |
+| **Control maestro** | Control total. Es el único que administra a los administradores y puede transferir el control. Se crea por consola (`owner:create`), que también sirve de acceso de emergencia (reinicia la contraseña y el doble factor). |
+| **Administrador** | Área de sistemas: secretarías, tótems, TVs, publicidad, usuarios (salvo administradores), configuración, sedes, monitoreo y auditoría. |
+| **Supervisor de área** | Ve las colas, reportes y productividad **solo de sus secretarías**; puede cancelar turnos de su área. |
+| **Técnico** | Tótems, TVs y monitoreo. No cambia configuración ni usuarios. |
+| **Auditor** | Solo lectura: reportes, productividad y auditoría. |
+| **Secretaria** | Atiende la cola de su secretaría desde `/panel`. |
+
+El servidor valida cada permiso; el panel solo oculta lo que no corresponde. En **Usuarios → Ver permisos por rol** está la matriz completa.
+
+**Doble factor:** cualquier usuario puede activarlo en *Mi cuenta*. En *Configuración → Seguridad y datos* se puede exigir por rol
+(recomendado: control maestro y administradores).
+
+## Datos y respaldos
+
+- Los DNI se guardan **cifrados** (AES-256-GCM) y se buscan por un hash; nunca quedan en texto plano. La clave es `DATA_KEY`.
+- Los pacientes sin visitas durante N meses se anonimizan automáticamente (configurable).
+- Los turnos viejos pasan a un **archivo histórico**; las estadísticas se conservan en resúmenes diarios.
+- Respaldos automáticos diarios + recuperación a un momento puntual: ver `deploy/linux/BACKUPS.md`.
+- Monitoreo en *Panel → Monitoreo* y métricas Prometheus en `/api/metrics` (con `METRICS_TOKEN`).
+
+## Tótem sin conexión
+
+Si se corta la red, el tótem sigue emitiendo e imprimiendo turnos con numeración propia (por ejemplo `A-T3-001`),
+y los sincroniza solo cuando vuelve la conexión, respetando la hora original para que entren a la cola en su orden.
 
 ## Configurar los equipos clientes
 

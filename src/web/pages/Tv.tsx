@@ -13,7 +13,7 @@ import { Logo } from '../components/Brand'
 type Recent = Omit<CallTicket, 'at'> & { at: string }
 interface TvState {
   sectorIds: number[]
-  settings: Pick<Settings, 'org_name' | 'brand_color' | 'tv_voice_enabled' | 'tv_chime_enabled' | 'tv_voice_template' | 'tv_voice_rate' | 'tv_chime_volume' | 'tv_history_size' | 'tv_media_enabled' | 'tv_media_interval_sec' | 'tv_layout' | 'tv_ticker'> & { tv_media_urls: string[] }
+  settings: Pick<Settings, 'org_name' | 'brand_color' | 'tv_voice_enabled' | 'tv_chime_enabled' | 'tv_voice_template' | 'tv_voice_rate' | 'tv_chime_volume' | 'tv_history_size' | 'tv_media_enabled' | 'tv_media_interval_sec' | 'tv_layout' | 'tv_ticker'> & { tv_media: { url: string; kind: 'image' | 'video' }[] }
   recent: Recent[]
   waiting: { sectorId: number; name: string; color: string; count: number }[]
 }
@@ -80,6 +80,10 @@ export default function Tv() {
   }, [load, loadBrand])
 
   useEffect(() => {
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {})
+  }, [])
+
+  useEffect(() => {
     ann.current = new Announcer()
     void ann.current.unlock().then((ok) => ok && setLocked(false))
   }, [])
@@ -117,7 +121,7 @@ export default function Tv() {
 
   const s = st?.settings
   const brand = s?.brand_color ?? '#0f766e'
-  const media = s?.tv_media_enabled ? s.tv_media_urls : []
+  const media = s?.tv_media_enabled ? s.tv_media ?? [] : []
   const hasMedia = media.length > 0 && s?.tv_layout !== 'calls'
   const fullMedia = hasMedia && s?.tv_layout === 'media'
   const muted = s && !s.tv_chime_enabled && !s.tv_voice_enabled
@@ -296,29 +300,58 @@ export default function Tv() {
   )
 }
 
-/** Carrusel de publicidad (imágenes subidas o URLs de imagen/video) con fundido y barra de progreso. */
-function TvMedia({ urls, intervalSec }: { urls: string[]; intervalSec: number }) {
+/**
+ * Carrusel de publicidad: las imágenes duran N segundos y los videos se reproducen completos (sin sonido)
+ * antes de pasar al siguiente. Barra de progreso abajo.
+ */
+function TvMedia({ urls, intervalSec }: { urls: { url: string; kind: 'image' | 'video' }[]; intervalSec: number }) {
   const [i, setI] = useState(0)
+  const [progress, setProgress] = useState(0)
+  const item = urls[i % Math.max(1, urls.length)]
+  const next = useCallback(() => {
+    setProgress(0)
+    setI((x) => (x + 1) % Math.max(1, urls.length))
+  }, [urls.length])
   useEffect(() => {
-    if (urls.length <= 1) return
-    const id = setInterval(() => setI((x) => (x + 1) % urls.length), intervalSec * 1000)
-    return () => clearInterval(id)
-  }, [urls.length, intervalSec])
-  const src = urls[i % urls.length]
-  if (!src) return null
-  const isVideo = /\.(mp4|webm|ogg)(\?|$)/i.test(src)
+    if (!item || item.kind === 'video' || urls.length <= 1) return
+    const id = setTimeout(next, intervalSec * 1000)
+    return () => clearTimeout(id)
+  }, [item, intervalSec, next, urls.length])
+  if (!item) return null
   return (
     <>
       <AnimatePresence mode="sync">
-        <motion.div key={src + i} initial={{ opacity: 0, scale: 1.04 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} transition={{ duration: 1 }} className="absolute inset-0">
-          {isVideo ? <video src={src} className="h-full w-full object-cover" autoPlay muted loop playsInline /> : <img src={src} alt="" className="h-full w-full object-cover" />}
+        <motion.div key={item.url + i} initial={{ opacity: 0, scale: 1.04 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} transition={{ duration: 1 }} className="absolute inset-0">
+          {item.kind === 'video' ? (
+            <video
+              src={item.url}
+              className="h-full w-full object-cover"
+              autoPlay
+              muted
+              playsInline
+              loop={urls.length === 1}
+              onEnded={next}
+              onError={next}
+              onTimeUpdate={(e) => {
+                const v = e.currentTarget
+                if (v.duration) setProgress(v.currentTime / v.duration)
+              }}
+            />
+          ) : (
+            <img src={item.url} alt="" className="h-full w-full object-cover" onError={next} />
+          )}
         </motion.div>
       </AnimatePresence>
       {urls.length > 1 && (
         <div className="absolute inset-x-6 bottom-4 flex gap-1.5">
           {urls.map((u, k) => (
-            <div key={u + k} className="h-1 flex-1 overflow-hidden rounded-full bg-white/25">
-              {k === i % urls.length && <div key={i} className="h-full bg-white" style={{ animation: `grow ${intervalSec}s linear forwards` }} />}
+            <div key={u.url + k} className="h-1 flex-1 overflow-hidden rounded-full bg-white/25">
+              {k === i % urls.length &&
+                (item.kind === 'video' ? (
+                  <div className="h-full bg-white transition-[width] duration-300" style={{ width: `${progress * 100}%` }} />
+                ) : (
+                  <div key={i} className="h-full bg-white" style={{ animation: `grow ${intervalSec}s linear forwards` }} />
+                ))}
             </div>
           ))}
         </div>

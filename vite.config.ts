@@ -10,7 +10,25 @@ export default defineConfig({
   root: 'src/web',
   plugins: [react(), tailwindcss()],
   define: { __APP_VERSION__: JSON.stringify(version) },
-  build: { outDir: '../../dist/web', emptyOutDir: true, sourcemap: false, minify: 'esbuild' },
+  build: {
+    outDir: '../../dist/web',
+    emptyOutDir: true,
+    sourcemap: false,
+    rollupOptions: {
+      output: {
+        // Librerías grandes en archivos aparte: se cachean una vez y no se vuelven a bajar al actualizar la app
+        manualChunks(id: string) {
+          if (!id.includes('node_modules')) return undefined
+          if (/react-dom|react-router|scheduler|[\/]react[\/]/.test(id)) return 'react'
+          if (id.includes('framer-motion') || id.includes('motion-dom') || id.includes('motion-utils')) return 'motion'
+          if (id.includes('i18next')) return 'i18n'
+          if (id.includes('qrcode')) return 'qrcode'
+          if (id.includes('lucide-react')) return 'icons'
+          return 'vendor'
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     strictPort: true,

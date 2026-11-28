@@ -4,19 +4,20 @@ import { api, type Btn, type Priority, type Sector } from '../lib/api'
 import { PALETTE, textOn } from '../lib/format'
 import { useLoad } from '../lib/live'
 import { BUTTON_ICONS, ButtonIcon } from '../components/Icons'
-import { useAuth, MANAGERS } from '../auth'
+import { can, useAuth } from '../auth'
 import { Button, Card, ColorPicker, Empty, ErrorBox, Field, Modal, PageHeader, Spinner, inputCls, useConfirm, useToast } from '../ui'
 
-type SectorForm = { id?: number; name: string; color: string; welcomeMessage: string }
+type SectorForm = { id?: number; name: string; color: string; welcomeMessage: string; siteId: number | null }
 type BtnForm = { id?: number; sectorId: number; targetSectorId: number; label: string; subtitle: string; color: string; icon: string; prefix: string; priorityId: number | null }
 
 export default function Sectors() {
   const toast = useToast()
   const confirm = useConfirm()
   const { user } = useAuth()
-  const canEdit = !!user && MANAGERS.includes(user.role)
+  const canEdit = can(user, 'sectors.manage')
   const { data, error, loading, reload, setData } = useLoad(() => api<Sector[]>('/api/admin/sectors'))
   const prios = useLoad(() => api<Priority[]>('/api/admin/priorities'))
+  const sites = useLoad(() => api<{ id: number; name: string; active: boolean }[]>('/api/admin/sites'))
   const pub = useLoad(() => api<{ settings: { priorities_enabled: boolean } }>('/api/public/sectors'))
   const prioOn = !!pub.data?.settings.priorities_enabled
   const [sf, setSf] = useState<SectorForm | null>(null)
@@ -45,7 +46,7 @@ export default function Sectors() {
   const saveSector = () =>
     run(
       () => {
-        const body = { name: sf!.name, color: sf!.color, welcomeMessage: sf!.welcomeMessage || null }
+        const body = { name: sf!.name, color: sf!.color, welcomeMessage: sf!.welcomeMessage || null, siteId: sf!.siteId }
         return sf!.id ? api(`/api/admin/sectors/${sf!.id}`, { method: 'PUT', body }) : api('/api/admin/sectors', { body })
       },
       'Secretaría guardada',
@@ -104,7 +105,7 @@ export default function Sectors() {
         description="Cada secretaría tiene su cola y sus botones. Cada botón que toca el paciente genera un turno. Arrastrá los botones para cambiar el orden en el tótem."
         actions={
           canEdit && (
-            <Button onClick={() => setSf({ name: '', color: PALETTE[sectors.length % PALETTE.length], welcomeMessage: '' })}>
+            <Button onClick={() => setSf({ name: '', color: PALETTE[sectors.length % PALETTE.length], welcomeMessage: '', siteId: null })}>
               <Plus size={18} />
               Nueva secretaría
             </Button>
@@ -121,7 +122,7 @@ export default function Sectors() {
                 <h2 className="display flex-1 truncate text-xl font-semibold">{s.name}</h2>
                 {canEdit && (
                   <>
-                    <button aria-label={`Editar ${s.name}`} onClick={() => setSf({ id: s.id, name: s.name, color: s.color, welcomeMessage: s.welcomeMessage ?? '' })} className="rounded-md p-1.5 hover:bg-black/10">
+                    <button aria-label={`Editar ${s.name}`} onClick={() => setSf({ id: s.id, name: s.name, color: s.color, welcomeMessage: s.welcomeMessage ?? '', siteId: s.siteId ?? null })} className="rounded-md p-1.5 hover:bg-black/10">
                       <Pencil size={17} />
                     </button>
                     <button aria-label={`Eliminar ${s.name}`} onClick={() => delSector(s)} className="rounded-md p-1.5 hover:bg-black/10">
@@ -227,6 +228,14 @@ export default function Sectors() {
           <Field label="Color de la secretaría" hint="Es el color que se ve en el tótem y en la pantalla cuando llaman.">
             <ColorPicker value={sf.color} onChange={(color) => setSf({ ...sf, color })} />
           </Field>
+          {(sites.data ?? []).filter((x) => x.active).length > 1 && (
+            <Field label="Sede">
+              <select className={inputCls} value={sf.siteId ?? ''} onChange={(e) => setSf({ ...sf, siteId: Number(e.target.value) || null })}>
+                <option value="">Sede principal</option>
+                {(sites.data ?? []).filter((x) => x.active).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+              </select>
+            </Field>
+          )}
           <Field label="Mensaje de bienvenida del tótem" hint="Opcional.">
             <input className={inputCls} value={sf.welcomeMessage} onChange={(e) => setSf({ ...sf, welcomeMessage: e.target.value })} placeholder="Bienvenido. Tocá una opción para sacar tu turno." />
           </Field>

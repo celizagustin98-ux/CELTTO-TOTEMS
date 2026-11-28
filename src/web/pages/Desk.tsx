@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowRightLeft, BellRing, Bell, BellOff, Check, Keyboard, LogOut, Megaphone, Minimize2, Maximize2, Play, UserX, WifiOff, IdCard, Phone, StickyNote, UserRound } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
+import { ArrowRightLeft, BellRing, Bell, BellOff, Check, Keyboard, LogOut, Megaphone, Minimize2, Maximize2, Play, UserX, WifiOff, IdCard, Phone, StickyNote, UserRound, Pencil, UserCog, HeartPulse } from 'lucide-react'
 import { useAuth } from '../auth'
 import { api, type Stats } from '../lib/api'
 import { elapsed, fmtMin, textOn, waitLevel, waitMin } from '../lib/format'
 import { useDebounced, useLive, useNow } from '../lib/live'
-import { Avatar, Button, Card, ErrorBox, Kbd, Modal, Spinner, ThemeToggle, useConfirm, useHotkeys, useToast } from '../ui'
+import { Avatar, Button, Card, ErrorBox, Field, Kbd, Modal, Spinner, ThemeToggle, inputCls, useConfirm, useHotkeys, useToast } from '../ui'
+import { LanguageSwitcher } from '../components/LanguageSwitcher'
 
-interface Current { id: number; code: string; status: 'called' | 'serving'; createdAt: string; calledAt: string | null; startedAt: string | null; recallCount: number; buttonLabel: string; dni: string | null; patient: { id: number; name: string; document: string; documentType: string; visits: number; phone: string | null; notes: string | null } | null }
+interface Current { id: number; code: string; status: 'called' | 'serving'; createdAt: string; calledAt: string | null; startedAt: string | null; recallCount: number; buttonLabel: string; dni: string | null; patient: { id: number; name: string; document: string; documentType: string; visits: number; phone: string | null; notes: string | null; healthInsurance: string | null; insuranceNumber: string | null } | null }
 interface Waiting { id: number; code: string; priority: number; priorityName: string | null; priorityColor: string | null; createdAt: string; buttonLabel: string; patientName: string | null }
 interface DeskState {
   user: { displayName: string; desk: string | null; deskId: number | null }
@@ -61,6 +64,8 @@ const LEVEL = {
 } as const
 
 export default function Desk() {
+  const { t } = useTranslation()
+  const [pf, setPf] = useState<{ phone: string; healthInsurance: string; insuranceNumber: string; notes: string } | null>(null)
   const { user, logout, refresh } = useAuth()
   const toast = useToast()
   const confirm = useConfirm()
@@ -118,7 +123,7 @@ export default function Desk() {
     try {
       setSt(await api<DeskState>('/api/desk/transfer', { body: { sectorId } }))
       setTransfer(false)
-      toast('Turno derivado')
+      toast(t('desk.transferred'))
     } catch (e) {
       toast((e as Error).message, 'error')
     } finally {
@@ -129,18 +134,18 @@ export default function Desk() {
     try {
       setSt(await api<DeskState>('/api/desk/desk', { body: { deskId } }))
       await refresh()
-      toast('Puesto actualizado')
+      toast(t('desk.deskUpdated'))
     } catch (e) {
       toast((e as Error).message, 'error')
     }
   }
   const absent = async () => {
     if (!st?.current) return
-    if (await confirm({ title: 'Marcar como ausente', message: <>¿El turno <b>{st.current.code}</b> no se presentó? Sale de la cola y queda registrado como ausente.</>, confirmLabel: 'Sí, no se presentó', danger: true }))
-      void act('absent', 'Marcado como ausente')
+    if (await confirm({ title: t('desk.absentTitle'), message: t('desk.absentMsg', { code: st.current.code }), confirmLabel: t('desk.absentOk'), danger: true }))
+      void act('absent', t('desk.markedAbsent'))
   }
   const exit = async () => {
-    if (st?.current && !(await confirm({ title: 'Tenés un turno en curso', message: `El turno ${st.current.code} sigue abierto. Si salís, va a quedar asignado a vos hasta que lo finalices.`, confirmLabel: 'Salir igual', danger: true }))) return
+    if (st?.current && !(await confirm({ title: t('desk.openTitle'), message: t('desk.openMsg', { code: st.current.code }), confirmLabel: t('desk.leaveAnyway'), danger: true }))) return
     await logout()
   }
 
@@ -150,9 +155,9 @@ export default function Desk() {
     {
       ' ': () => !cur && next && act('call-next'),
       F1: () => !cur && next && act('call-next'),
-      r: () => cur?.status === 'called' && act('recall', 'Volviste a llamar'),
+      r: () => cur?.status === 'called' && act('recall', t('desk.recalled')),
       i: () => cur?.status === 'called' && act('start'),
-      f: () => cur && act('finish', 'Atención finalizada'),
+      f: () => cur && act('finish', t('desk.finished')),
       a: () => cur?.status === 'called' && void absent(),
       d: () => cur && st!.transferTargets.length > 0 && setTransfer(true),
       '?': () => setHelp(true),
@@ -174,21 +179,21 @@ export default function Desk() {
             {user?.displayName}
             {!connected && (
               <span className="inline-flex items-center gap-1 rounded-full bg-black/20 px-2 py-0.5 text-xs">
-                <WifiOff size={12} /> Sin conexión
+                <WifiOff size={12} /> {t('desk.offline')}
               </span>
             )}
           </div>
         </div>
         {st.desks.length > 0 ? (
           <label className="flex items-center gap-2 text-sm">
-            <span className="opacity-80">Puesto</span>
+            <span className="opacity-80">{t('desk.desk')}</span>
             <select
               value={st.user.deskId ?? ''}
               onChange={(e) => void chooseDesk(e.target.value ? Number(e.target.value) : null)}
               className="rounded-lg border border-current/25 bg-black/10 px-2 py-1.5 font-medium [&>option]:text-ink"
               aria-label="Elegir puesto"
             >
-              <option value="">{st.user.desk ? `${st.user.desk} (manual)` : 'Elegí tu puesto'}</option>
+              <option value="">{st.user.desk ? `${st.user.desk} (${t('desk.manual')})` : t('desk.chooseDesk')}</option>
               {st.desks.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.name}
@@ -209,10 +214,12 @@ export default function Desk() {
           <button onClick={() => setHelp(true)} className="hidden rounded-md p-2 hover:bg-black/10 sm:block" aria-label="Atajos de teclado" title="Atajos de teclado (?)">
             <Keyboard size={17} />
           </button>
+          <LanguageSwitcher className="mx-1 hidden md:inline-flex" />
+          <Link to="/cuenta" className="rounded-md p-2 hover:bg-black/10" aria-label={t('desk.account')} title={t('desk.account')}><UserCog size={17} /></Link>
           <ThemeToggle className="hover:bg-black/10" />
           <button onClick={exit} className="ml-1 flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium hover:bg-black/10">
             <LogOut size={17} />
-            Salir
+            {t('desk.logout')}
           </button>
         </div>
       </header>
@@ -221,10 +228,10 @@ export default function Desk() {
         <dl className={`grid grid-cols-2 sm:grid-cols-4 ${compact ? 'gap-2' : 'gap-3'}`}>
           {(
             [
-              ['En espera', stats.waiting, null],
-              ['Atendidos hoy', stats.done, null],
-              ['Ausentes', stats.absent, null],
-              ['Espera más larga', `${oldest} min`, waitLevel(oldest, thresholds.warn, thresholds.danger)],
+              [t('desk.waiting'), stats.waiting, null],
+              [t('desk.doneToday'), stats.done, null],
+              [t('desk.absent'), stats.absent, null],
+              [t('desk.longest'), `${oldest} min`, waitLevel(oldest, thresholds.warn, thresholds.danger)],
             ] as const
           ).map(([l, v, lvl]) => (
             <Card key={l} className={compact ? 'px-3 py-2' : 'px-4 py-3'}>
@@ -241,13 +248,13 @@ export default function Desk() {
                 <div className="flex items-center justify-between text-sm opacity-90">
                   <span className="inline-flex items-center gap-2">
                     <span className="h-2 w-2 rounded-full bg-current pulse-dot" />
-                    {cur.status === 'called' ? 'Llamado — esperando que se acerque' : 'En atención'}
-                    {cur.recallCount > 0 ? ` · ${cur.recallCount} ${cur.recallCount === 1 ? 'rellamado' : 'rellamados'}` : ''}
+                    {cur.status === 'called' ? t('desk.calledWaiting') : t('desk.serving')}
+                    {cur.recallCount > 0 ? ` · ${cur.recallCount} ${t('desk.recalls')}` : ''}
                   </span>
                   <span className="num text-xl">{elapsed(cur.status === 'serving' ? cur.startedAt : cur.calledAt, now)}</span>
                 </div>
                 <div className={`num mt-2 leading-[0.9] ${compact ? 'text-7xl' : 'text-[clamp(5rem,14vw,9rem)]'}`}>{cur.code}</div>
-                <div className="mt-2 text-lg opacity-90">{cur.buttonLabel} · esperó {waitMin(cur.createdAt, Date.parse(cur.calledAt ?? cur.createdAt))} min</div>
+                <div className="mt-2 text-lg opacity-90">{cur.buttonLabel} · {t('desk.waited', { n: waitMin(cur.createdAt, Date.parse(cur.calledAt ?? cur.createdAt)) })}</div>
               </div>
               {cur.patient ? (
                 <div className="flex flex-wrap items-center gap-4 border-b border-line bg-surface px-6 py-4">
@@ -257,41 +264,45 @@ export default function Desk() {
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted">
                       <span className="inline-flex items-center gap-1 font-mono"><IdCard size={14} /> {cur.patient.documentType} {cur.patient.document}</span>
                       {cur.patient.phone && <span className="inline-flex items-center gap-1"><Phone size={13} /> {cur.patient.phone}</span>}
-                      <span className="badge badge-brand">{cur.patient.visits <= 1 ? 'Primera visita' : `${cur.patient.visits} visitas`}</span>
+                      {cur.patient.healthInsurance && <span className="inline-flex items-center gap-1"><HeartPulse size={13} /> {cur.patient.healthInsurance}{cur.patient.insuranceNumber ? ` · ${cur.patient.insuranceNumber}` : ''}</span>}
+                      <span className="badge badge-brand">{cur.patient.visits <= 1 ? t('desk.firstVisit') : t('desk.visits', { n: cur.patient.visits })}</span>
                     </div>
                   </div>
+                  <Button size="sm" variant="soft" onClick={() => setPf({ phone: cur.patient!.phone ?? '', healthInsurance: cur.patient!.healthInsurance ?? '', insuranceNumber: cur.patient!.insuranceNumber ?? '', notes: cur.patient!.notes ?? '' })}>
+                    <Pencil size={14} /> {t('desk.editPatient')}
+                  </Button>
                   {cur.patient.notes && (
                     <div className="flex w-full items-start gap-2 rounded-lg bg-warn-soft px-3 py-2 text-[13px] text-warn"><StickyNote size={15} className="mt-0.5 shrink-0" /> {cur.patient.notes}</div>
                   )}
                 </div>
               ) : (
-                <div className="flex items-center gap-2 border-b border-line px-6 py-3 text-[13px] text-muted"><UserRound size={15} /> Sin identificar{cur.dni ? ` · DNI ${cur.dni}` : ''}</div>
+                <div className="flex items-center gap-2 border-b border-line px-6 py-3 text-[13px] text-muted"><UserRound size={15} /> {t('desk.unidentified')}{cur.dni ? ` · DNI ${cur.dni}` : ''}</div>
               )}
               <div className="flex flex-wrap gap-2 border-t border-dashed border-line px-5 py-4">
                 {cur.status === 'called' ? (
                   <>
                     <Button size="lg" onClick={() => act('start')} disabled={busy}>
                       <Play size={18} />
-                      Iniciar atención<Kbd>I</Kbd>
+                      {t('desk.start')}<Kbd>I</Kbd>
                     </Button>
-                    <Button size="lg" variant="soft" onClick={() => act('recall', 'Volviste a llamar')} disabled={busy}>
+                    <Button size="lg" variant="soft" onClick={() => act('recall', t('desk.recalled'))} disabled={busy}>
                       <BellRing size={18} />
-                      Volver a llamar<Kbd>R</Kbd>
+                      {t('desk.recall')}<Kbd>R</Kbd>
                     </Button>
                     <Button size="lg" variant="soft" className="!text-danger" onClick={absent} disabled={busy}>
                       <UserX size={18} />
-                      No se presentó<Kbd>A</Kbd>
+                      {t('desk.noShow')}<Kbd>A</Kbd>
                     </Button>
                   </>
                 ) : (
-                  <Button size="lg" variant="success" onClick={() => act('finish', 'Atención finalizada')} disabled={busy}>
+                  <Button size="lg" variant="success" onClick={() => act('finish', t('desk.finished'))} disabled={busy}>
                     <Check size={18} />
-                    Finalizar<Kbd>F</Kbd>
+                    {t('desk.finish')}<Kbd>F</Kbd>
                   </Button>
                 )}
                 <Button size="lg" variant="soft" onClick={() => setTransfer(true)} disabled={busy || st.transferTargets.length === 0}>
                   <ArrowRightLeft size={18} />
-                  Derivar<Kbd>D</Kbd>
+                  {t('desk.transfer')}<Kbd>D</Kbd>
                 </Button>
               </div>
             </div>
@@ -300,31 +311,29 @@ export default function Desk() {
               <div className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-2xl" style={{ background: `${sector.color}1f`, color: sector.color }}>
                 <Megaphone size={26} />
               </div>
-              <div className="display text-2xl font-semibold">{next ? 'Listo para llamar' : 'No hay turnos en espera'}</div>
+              <div className="display text-2xl font-semibold">{next ? t('desk.ready') : t('desk.empty')}</div>
               <p className="mx-auto mt-1 max-w-sm text-muted">
                 {next ? (
-                  <>
-                    Sigue el <span className="font-semibold text-ink">{next.code}</span> ({next.buttonLabel}).
-                  </>
+                  t('desk.nextIs', { code: next.code, label: next.buttonLabel })
                 ) : (
-                  'Cuando alguien saque un turno, aparece acá al instante.'
+                  t('desk.emptyHint')
                 )}
               </p>
-              {!st.user.desk && st.desks.length > 0 && <p className="mt-3 text-sm font-medium text-warn">Elegí tu puesto arriba para que la TV anuncie a dónde ir.</p>}
+              {!st.user.desk && st.desks.length > 0 && <p className="mt-3 text-sm font-medium text-warn">{t('desk.pickDeskHint')}</p>}
               <Button size="xl" className="mt-6 px-10" onClick={() => act('call-next')} disabled={busy || !next}>
                 <Megaphone size={20} />
-                Llamar siguiente<Kbd>Espacio</Kbd>
+                {t('desk.callNext')}<Kbd>{t('desk.space')}</Kbd>
               </Button>
             </Card>
           )}
 
           <Card>
             <div className="flex items-center justify-between border-b border-line px-5 py-3.5">
-              <h2 className="display text-lg font-semibold">En espera</h2>
+              <h2 className="display text-lg font-semibold">{t('desk.queue')}</h2>
               <span className="num text-2xl">{waiting.length}</span>
             </div>
             {waiting.length === 0 ? (
-              <p className="px-5 py-8 text-center text-sm text-muted">La cola está vacía.</p>
+              <p className="px-5 py-8 text-center text-sm text-muted">{t('desk.queueEmpty')}</p>
             ) : (
               <ul className={`divide-y divide-line overflow-auto ${compact ? 'max-h-[22rem]' : 'max-h-[30rem]'}`}>
                 {waiting.map((w, i) => {
@@ -334,7 +343,7 @@ export default function Desk() {
                     <li key={w.id} className={`flex items-center gap-3 px-5 ${compact ? 'py-2' : 'py-3'} ${i === 0 ? 'bg-brand-soft/40' : ''}`}>
                       <span className={`num w-20 ${compact ? 'text-xl' : 'text-2xl'}`}>{w.code}</span>
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-medium">{w.patientName ?? <span className="font-normal text-muted">Sin identificar</span>}</div>
+                        <div className="truncate text-sm font-medium">{w.patientName ?? <span className="font-normal text-muted">{t('desk.unidentified')}</span>}</div>
                         <div className="truncate text-xs text-muted">{w.buttonLabel}</div>
                         <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
                           <span className={`badge ${LEVEL[lvl]}`} title="Tiempo de espera">{m} min</span>
@@ -343,11 +352,11 @@ export default function Desk() {
                               {w.priorityName}
                             </span>
                           )}
-                          {i === 0 && <span className="badge badge-brand">Sigue</span>}
+                          {i === 0 && <span className="badge badge-brand">{t('desk.nextBadge')}</span>}
                         </div>
                       </div>
                       <Button variant="soft" size="sm" onClick={() => act(`call/${w.id}`)} disabled={busy || !!cur}>
-                        Llamar
+                        {t('desk.call')}
                       </Button>
                     </li>
                   )
@@ -362,8 +371,8 @@ export default function Desk() {
       </main>
 
       {transfer && (
-        <Modal title="Derivar turno" onClose={() => setTransfer(false)}>
-          <p className="text-sm text-muted">El turno {cur?.code} pasa a la cola de la secretaría que elijas, conservando su número.</p>
+        <Modal title={t('desk.transferTitle')} onClose={() => setTransfer(false)}>
+          <p className="text-sm text-muted">{t('desk.transferHint', { code: cur?.code })}</p>
           <div className="grid gap-2">
             {st.transferTargets.map((t) => (
               <button key={t.id} onClick={() => doTransfer(t.id)} disabled={busy} className="flex items-center gap-3 rounded-lg border border-line px-4 py-3 text-left font-medium hover:bg-paper">
@@ -374,8 +383,39 @@ export default function Desk() {
           </div>
         </Modal>
       )}
+      {pf && (
+        <Modal
+          title={t('desk.patientData')}
+          onClose={() => setPf(null)}
+          footer={
+            <>
+              <Button variant="soft" onClick={() => setPf(null)}>{t('desk.cancel')}</Button>
+              <Button
+                onClick={async () => {
+                  try {
+                    setSt(await api<DeskState>('/api/desk/patient', { method: 'PUT', body: pf }))
+                    setPf(null)
+                    toast(t('desk.saved'))
+                  } catch (e) {
+                    toast((e as Error).message, 'error')
+                  }
+                }}
+              >
+                {t('desk.save')}
+              </Button>
+            </>
+          }
+        >
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label={t('desk.phone')}><input className={inputCls} value={pf.phone} onChange={(e) => setPf({ ...pf, phone: e.target.value })} inputMode="tel" autoFocus /></Field>
+            <Field label={t('desk.insurance')}><input className={inputCls} value={pf.healthInsurance} onChange={(e) => setPf({ ...pf, healthInsurance: e.target.value })} /></Field>
+            <Field label={t('desk.insuranceNumber')}><input className={inputCls} value={pf.insuranceNumber} onChange={(e) => setPf({ ...pf, insuranceNumber: e.target.value })} /></Field>
+          </div>
+          <Field label={t('desk.notes')} hint={t('desk.notesHint')}><textarea className={inputCls} rows={2} value={pf.notes} onChange={(e) => setPf({ ...pf, notes: e.target.value })} maxLength={500} /></Field>
+        </Modal>
+      )}
       {help && (
-        <Modal title="Atajos de teclado" onClose={() => setHelp(false)}>
+        <Modal title={t('desk.shortcuts')} onClose={() => setHelp(false)}>
           <ul className="space-y-2 text-sm">
             {[
               ['Espacio / F1', 'Llamar al siguiente'],

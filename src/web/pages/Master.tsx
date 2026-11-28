@@ -4,12 +4,12 @@ import { useTranslation } from 'react-i18next'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Armchair, BarChart3, ChevronRight, ExternalLink, Flag, Layers, LayoutGrid, LogOut, Menu, Monitor, ScrollText, Search,
-  Settings as Cog, Users, X, Command,
+  Settings as Cog, Users, X, Command, Activity, Building2, UserCog,
 } from 'lucide-react'
 import { LanguageSwitcher } from '../components/LanguageSwitcher'
 import { Logo } from '../components/Brand'
-import { MANAGERS, ROLE_LABEL, useAuth } from '../auth'
-import { api, type Role } from '../lib/api'
+import { ROLE_LABEL, can, useAuth } from '../auth'
+import { api } from '../lib/api'
 import { useLive } from '../lib/live'
 import { Avatar, ThemeToggle } from '../ui'
 import Overview from './MasterOverview'
@@ -21,32 +21,35 @@ import Priorities from './MasterPriorities'
 import Stations from './MasterStations'
 import Desks from './MasterDesks'
 import Audit from './MasterAudit'
+import MonitorPage from './MasterMonitor'
+import Sites from './MasterSites'
 
-const ALL: Role[] = ['owner', 'admin', 'tech']
-type NavItem = { to: string; end?: boolean; labelKey: string; icon: typeof LayoutGrid; roles: Role[]; hint: string; needsPriorities?: boolean }
+type NavItem = { to: string; end?: boolean; labelKey: string; icon: typeof LayoutGrid; perm: string; hint: string; needsPriorities?: boolean }
 const GROUPS: { title: string; items: NavItem[] }[] = [
   {
     title: 'Operación',
     items: [
-      { to: '/master', end: true, labelKey: 'nav.overview', icon: LayoutGrid, roles: ALL, hint: 'Colas en vivo, alertas y turnos de hoy' },
-      { to: '/master/reportes', labelKey: 'nav.reports', icon: BarChart3, roles: ALL, hint: 'Tiempos de espera, atención y exportación' },
+      { to: '/master', end: true, labelKey: 'nav.overview', icon: LayoutGrid, perm: 'overview.view', hint: 'Colas en vivo, alertas y turnos de hoy' },
+      { to: '/master/reportes', labelKey: 'nav.reports', icon: BarChart3, perm: 'reports.view', hint: 'Productividad, tiempos y mapa de demanda' },
     ],
   },
   {
     title: 'Configuración',
     items: [
-      { to: '/master/secretarias', labelKey: 'nav.sectors', icon: Layers, roles: ALL, hint: 'Colas y botones del tótem' },
-      { to: '/master/escritorios', labelKey: 'nav.desks', icon: Armchair, roles: ALL, hint: 'Boxes y ventanillas' },
-      { to: '/master/estaciones', labelKey: 'nav.stations', icon: Monitor, roles: ALL, hint: 'Direcciones fijas de tótems y TVs' },
-      { to: '/master/prioridades', labelKey: 'nav.priorities', icon: Flag, roles: ALL, hint: 'Atención preferencial', needsPriorities: true },
+      { to: '/master/secretarias', labelKey: 'nav.sectors', icon: Layers, perm: 'sectors.view', hint: 'Colas y botones del tótem' },
+      { to: '/master/escritorios', labelKey: 'nav.desks', icon: Armchair, perm: 'sectors.view', hint: 'Boxes y ventanillas' },
+      { to: '/master/estaciones', labelKey: 'nav.stations', icon: Monitor, perm: 'stations.manage', hint: 'Direcciones fijas de tótems y TVs' },
+      { to: '/master/prioridades', labelKey: 'nav.priorities', icon: Flag, perm: 'sectors.view', hint: 'Atención preferencial', needsPriorities: true },
+      { to: '/master/sedes', labelKey: 'nav.sites', icon: Building2, perm: 'sites.manage', hint: 'Sedes de la institución' },
     ],
   },
   {
     title: 'Administración',
     items: [
-      { to: '/master/usuarios', labelKey: 'nav.users', icon: Users, roles: MANAGERS, hint: 'Secretarias, técnicos y administradores' },
-      { to: '/master/configuracion', labelKey: 'nav.settings', icon: Cog, roles: MANAGERS, hint: 'Marca, tótem, TV y publicidad' },
-      { to: '/master/auditoria', labelKey: 'nav.audit', icon: ScrollText, roles: MANAGERS, hint: 'Accesos y cambios' },
+      { to: '/master/usuarios', labelKey: 'nav.users', icon: Users, perm: 'users.view', hint: 'Roles, permisos y doble factor' },
+      { to: '/master/configuracion', labelKey: 'nav.settings', icon: Cog, perm: 'config.manage', hint: 'Marca, tótem, TV, publicidad y seguridad' },
+      { to: '/master/monitoreo', labelKey: 'nav.monitor', icon: Activity, perm: 'monitor.view', hint: 'Estado del sistema, equipos y respaldos' },
+      { to: '/master/auditoria', labelKey: 'nav.audit', icon: ScrollText, perm: 'audit.view', hint: 'Accesos y cambios' },
     ],
   },
 ]
@@ -85,9 +88,9 @@ export default function Master() {
   }, [])
 
   const role = user?.role ?? 'tech'
-  const groups = GROUPS.map((g) => ({ ...g, items: g.items.filter((n) => n.roles.includes(role) && (!n.needsPriorities || prioritiesOn)) })).filter((g) => g.items.length)
+  const groups = GROUPS.map((g) => ({ ...g, items: g.items.filter((n) => can(user, n.perm) && (!n.needsPriorities || prioritiesOn)) })).filter((g) => g.items.length)
   const flat = groups.flatMap((g) => g.items)
-  const can = (path: string) => flat.some((n) => n.to === `/master/${path}`)
+  const allowed = (path: string) => flat.some((n) => n.to === `/master/${path}`)
   const current = [...flat].sort((a, b) => b.to.length - a.to.length).find((n) => (n.end ? loc.pathname === n.to : loc.pathname.startsWith(n.to)))
 
   const link = ({ isActive }: { isActive: boolean }) =>
@@ -155,6 +158,9 @@ export default function Master() {
               <div className="truncate text-[13px] font-medium text-slate-100">{user?.displayName}</div>
               <div className="text-[11px] text-slate-500">{ROLE_LABEL[role]}</div>
             </div>
+            <NavLink to="/cuenta" aria-label="Mi cuenta" title="Mi cuenta y seguridad" className="rounded-md p-1.5 text-slate-400 hover:bg-white/10 hover:text-white">
+              <UserCog size={16} />
+            </NavLink>
             <button onClick={logout} aria-label={t('nav.logout')} title={t('nav.logout')} className="rounded-md p-1.5 text-slate-400 hover:bg-white/10 hover:text-white">
               <LogOut size={16} />
             </button>
@@ -187,15 +193,17 @@ export default function Master() {
             <AnimatePresence mode="wait">
               <motion.div key={loc.pathname} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.2, ease: 'easeOut' }}>
                 <Routes location={loc}>
-                  <Route index element={<Overview />} />
-                  <Route path="secretarias" element={<Sectors />} />
-                  <Route path="escritorios" element={<Desks />} />
-                  <Route path="estaciones" element={<Stations />} />
-                  <Route path="reportes" element={<Reports />} />
+                  <Route index element={can(user, 'overview.view') ? <Overview /> : <Navigate to={flat[0]?.to ?? '/cuenta'} replace />} />
+                  {allowed('secretarias') && <Route path="secretarias" element={<Sectors />} />}
+                  {allowed('escritorios') && <Route path="escritorios" element={<Desks />} />}
+                  {allowed('estaciones') && <Route path="estaciones" element={<Stations />} />}
+                  {allowed('reportes') && <Route path="reportes" element={<Reports />} />}
+                  {allowed('sedes') && <Route path="sedes" element={<Sites />} />}
+                  {allowed('monitoreo') && <Route path="monitoreo" element={<MonitorPage />} />}
                   {prioritiesOn && <Route path="prioridades" element={<Priorities />} />}
-                  {can('usuarios') && <Route path="usuarios" element={<UsersPage />} />}
-                  {can('configuracion') && <Route path="configuracion" element={<SettingsPage />} />}
-                  {can('auditoria') && <Route path="auditoria" element={<Audit />} />}
+                  {allowed('usuarios') && <Route path="usuarios" element={<UsersPage />} />}
+                  {allowed('configuracion') && <Route path="configuracion" element={<SettingsPage />} />}
+                  {allowed('auditoria') && <Route path="auditoria" element={<Audit />} />}
                   <Route path="*" element={<Navigate to="/master" replace />} />
                 </Routes>
               </motion.div>

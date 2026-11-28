@@ -31,6 +31,8 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --omit=optional && npm cache clean --force
 
 COPY --from=build /app/dist ./dist
+# Carpeta de la publicidad (imágenes y videos): se monta como volumen
+RUN mkdir -p /app/data/media && chown -R celtto:celtto /app/data
 
 # Sin src/, sin tests, sin .env, sin mapas de fuente
 USER celtto

@@ -3,7 +3,9 @@ import { Download, RefreshCw } from 'lucide-react'
 import { api } from '../lib/api'
 import { fmtMin, hhmm, todayStr } from '../lib/format'
 import { BarChart, HBars, Kpi, fillHours } from '../components/Charts'
-import { Button, Card, ErrorBox, Field, PageHeader, Spinner, inputCls } from '../ui'
+import { Button, Card, ErrorBox, Field, PageHeader, Segmented, Spinner, inputCls } from '../ui'
+import { HeatmapTab, ProductivityTab } from '../components/Productivity'
+import { can, useAuth } from '../auth'
 import { STATUS } from './MasterOverview'
 
 type Stats = {
@@ -41,6 +43,9 @@ export default function Reports() {
   const [data, setData] = useState<Stats | null>(null)
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(false)
+  const [tab, setTab] = useState<'general' | 'prod' | 'heat'>('prod')
+  const { user } = useAuth()
+  const canExport = can(user, 'reports.export')
 
   const load = async (f = from, t = to) => {
     setLoading(true)
@@ -64,7 +69,8 @@ export default function Reports() {
 
   return (
     <div className="fade-up space-y-6">
-      <PageHeader title="Estadísticas" description="Turnos, tiempos de espera y de atención por período." />
+      <PageHeader title="Estadísticas y productividad" description="Productividad del personal, tiempos de espera y atención, y demanda por franja horaria." />
+      <Segmented value={tab} onChange={setTab} options={[{ value: 'prod', label: 'Productividad' }, { value: 'general', label: 'General' }, { value: 'heat', label: 'Mapa de demanda' }]} />
       <Card className="p-4">
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex flex-wrap gap-1.5">
@@ -76,15 +82,19 @@ export default function Reports() {
           <Field label="Desde"><input type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)} className={inputCls} /></Field>
           <Field label="Hasta"><input type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} className={inputCls} /></Field>
           <Button onClick={() => void load()} disabled={loading}><RefreshCw size={15} className={loading ? 'animate-spin' : ''} />Actualizar</Button>
-          <a href={`/api/admin/stats/export.csv?from=${from}&to=${to}`} className="inline-flex h-10 items-center gap-2 rounded-lg border border-line bg-surface px-4 text-[14px] font-medium hover:bg-paper">
-            <Download size={15} /> Exportar CSV
-          </a>
+          {canExport && tab === 'general' && (
+            <a href={`/api/admin/stats/export.csv?from=${from}&to=${to}`} className="inline-flex h-10 items-center gap-2 rounded-lg border border-line bg-surface px-4 text-[14px] font-medium hover:bg-paper">
+              <Download size={15} /> Exportar CSV
+            </a>
+          )}
         </div>
       </Card>
-      {err && <ErrorBox msg={err} retry={() => void load()} />}
-      {!data && loading && <Spinner />}
+      {tab === 'prod' && <ProductivityTab key={`${from}-${to}-${data?.from ?? ''}`} from={data?.from ?? from} to={data?.to ?? to} canExport={canExport} />}
+      {tab === 'heat' && <HeatmapTab key={`${from}-${to}-${data?.from ?? ''}`} from={data?.from ?? from} to={data?.to ?? to} />}
+      {tab === 'general' && err && <ErrorBox msg={err} retry={() => void load()} />}
+      {tab === 'general' && !data && loading && <Spinner />}
 
-      {data && (
+      {tab === 'general' && data && (
         <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
             <Kpi label="Turnos" value={data.total} />

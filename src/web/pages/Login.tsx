@@ -1,7 +1,7 @@
 import { useState, type FormEvent, type KeyboardEvent } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Eye, EyeOff, Lock, User as UserIcon } from 'lucide-react'
+import { Eye, EyeOff, Lock, ShieldCheck, User as UserIcon } from 'lucide-react'
 import { homeFor, useAuth } from '../auth'
 import { LanguageSwitcher } from '../components/LanguageSwitcher'
 import { Logo } from '../components/Brand'
@@ -9,7 +9,7 @@ import { Button, Field, ThemeToggle, inputCls } from '../ui'
 
 export default function Login() {
   const { t } = useTranslation()
-  const { user, login } = useAuth()
+  const { user, login, verifyMfa } = useAuth()
   const nav = useNavigate()
   const loc = useLocation()
   const [username, setU] = useState('')
@@ -18,6 +18,8 @@ export default function Login() {
   const [caps, setCaps] = useState(false)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [challenge, setChallenge] = useState<string | null>(null)
+  const [code, setCode] = useState('')
   if (user) return <Navigate to={homeFor(user)} replace />
 
   const submit = async (e: FormEvent) => {
@@ -25,12 +27,21 @@ export default function Login() {
     setBusy(true)
     setError('')
     try {
-      const u = await login(username.trim(), password)
+      const r = challenge ? await verifyMfa(challenge, code.trim()) : await login(username.trim(), password)
+      if ('mfaRequired' in r) {
+        setChallenge(r.challenge)
+        setCode('')
+        return
+      }
       const from = (loc.state as { from?: string } | null)?.from
-      nav(from && from.startsWith(homeFor(u)) ? from : homeFor(u), { replace: true })
+      nav(from && from.startsWith(homeFor(r)) ? from : homeFor(r), { replace: true })
     } catch (err) {
-      setError((err as Error).message)
-      setP('')
+      const msg = (err as Error).message
+      setError(msg)
+      if (challenge) {
+        setCode('')
+        if (/venció|Volvé a ingresar/.test(msg)) setChallenge(null)
+      } else setP('')
     } finally {
       setBusy(false)
     }
@@ -81,6 +92,18 @@ export default function Login() {
               <h1 className="display text-[1.85rem] font-semibold tracking-tight">{t('login.title')}</h1>
               <p className="mt-1 text-[14px] text-muted">{t('login.subtitle')}</p>
             </div>
+            {challenge ? (
+              <div className="space-y-4">
+                <div className="flex items-start gap-3 rounded-xl border border-line bg-paper p-4">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand"><ShieldCheck size={20} /></span>
+                  <p className="text-[13.5px] leading-relaxed text-muted">Abrí la app de autenticación de tu celular e ingresá el código de 6 dígitos. Si no tenés el celular, usá uno de tus códigos de respaldo.</p>
+                </div>
+                <Field label="Código de verificación">
+                  <input className={`${inputCls} text-center font-mono text-2xl tracking-[0.4em]`} value={code} onChange={(e) => setCode(e.target.value.replace(/[^0-9A-Za-z-]/g, '').slice(0, 11))} autoFocus inputMode="numeric" autoComplete="one-time-code" placeholder="000000" />
+                </Field>
+                <button type="button" className="text-[13px] text-muted underline" onClick={() => { setChallenge(null); setError('') }}>Volver a usuario y contraseña</button>
+              </div>
+            ) : (<>
             <Field label={t('login.username')}>
               <div className="relative">
                 <UserIcon size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
@@ -110,12 +133,13 @@ export default function Login() {
                 </button>
               </div>
             </Field>
+            </>)}
             {error && (
               <p role="alert" className="rounded-lg border border-danger/25 bg-danger-soft px-3 py-2 text-[13.5px] text-danger">
                 {error}
               </p>
             )}
-            <Button type="submit" size="lg" className="w-full" disabled={busy || !username.trim() || !password}>
+            <Button type="submit" size="lg" className="w-full" disabled={busy || (challenge ? code.length < 6 : !username.trim() || !password)}>
               {busy ? t('app.loading') : t('login.submit')}
             </Button>
             <p className="text-center text-[12px] text-muted lg:hidden">Versión {__APP_VERSION__}</p>
