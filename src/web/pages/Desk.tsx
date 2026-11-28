@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowRightLeft, BellRing, Bell, BellOff, Check, Keyboard, LogOut, Megaphone, Minimize2, Maximize2, Play, UserX, WifiOff, IdCard } from 'lucide-react'
+import { ArrowRightLeft, BellRing, Bell, BellOff, Check, Keyboard, LogOut, Megaphone, Minimize2, Maximize2, Play, UserX, WifiOff, IdCard, Phone, StickyNote, UserRound } from 'lucide-react'
 import { useAuth } from '../auth'
 import { api, type Stats } from '../lib/api'
 import { elapsed, fmtMin, textOn, waitLevel, waitMin } from '../lib/format'
 import { useDebounced, useLive, useNow } from '../lib/live'
-import { Button, Card, ErrorBox, Kbd, Modal, Spinner, ThemeToggle, useConfirm, useHotkeys, useToast } from '../ui'
+import { Avatar, Button, Card, ErrorBox, Kbd, Modal, Spinner, ThemeToggle, useConfirm, useHotkeys, useToast } from '../ui'
 
-interface Current { id: number; code: string; status: 'called' | 'serving'; createdAt: string; calledAt: string | null; startedAt: string | null; recallCount: number; buttonLabel: string; dni: string | null }
-interface Waiting { id: number; code: string; priority: number; priorityName: string | null; priorityColor: string | null; createdAt: string; buttonLabel: string }
+interface Current { id: number; code: string; status: 'called' | 'serving'; createdAt: string; calledAt: string | null; startedAt: string | null; recallCount: number; buttonLabel: string; dni: string | null; patient: { id: number; name: string; document: string; documentType: string; visits: number; phone: string | null; notes: string | null } | null }
+interface Waiting { id: number; code: string; priority: number; priorityName: string | null; priorityColor: string | null; createdAt: string; buttonLabel: string; patientName: string | null }
 interface DeskState {
   user: { displayName: string; desk: string | null; deskId: number | null }
   sector: { id: number; name: string; color: string }
@@ -166,8 +166,8 @@ export default function Desk() {
   const oldest = waiting.length ? Math.max(...waiting.map((w) => waitMin(w.createdAt, now))) : 0
 
   return (
-    <div className="flex min-h-full flex-col">
-      <header className="flex flex-wrap items-center gap-3 px-5 py-3 sm:px-8" style={{ background: sector.color, color: fg }}>
+    <div className="flex min-h-full flex-col bg-mesh">
+      <header className="sticky top-0 z-30 flex flex-wrap items-center gap-3 px-5 py-3 shadow-sm sm:px-8" style={{ background: `linear-gradient(120deg, ${sector.color}, color-mix(in srgb, ${sector.color} 70%, #0b1220))`, color: fg }}>
         <div className="min-w-0 flex-1">
           <div className="display truncate text-xl font-semibold">{sector.name}</div>
           <div className="flex items-center gap-2 truncate text-sm opacity-85">
@@ -236,8 +236,8 @@ export default function Desk() {
 
         <div className={`grid items-start lg:grid-cols-[1.25fr_1fr] ${compact ? 'gap-3' : 'gap-5'}`}>
           {cur ? (
-            <div className="stub bg-surface shadow-sm ring-1 ring-line" style={{ ['--notch' as string]: '68%' }}>
-              <div className={compact ? 'px-5 pb-6 pt-4' : 'px-6 pb-8 pt-6'} style={{ background: sector.color, color: fg }}>
+            <div className="stub fade-up overflow-hidden rounded-2xl bg-surface shadow-lg ring-1 ring-line" style={{ ['--notch' as string]: '68%' }}>
+              <div className={compact ? 'px-5 pb-6 pt-4' : 'px-6 pb-8 pt-6'} style={{ background: `linear-gradient(140deg, ${sector.color}, color-mix(in srgb, ${sector.color} 72%, #0b1220))`, color: fg }}>
                 <div className="flex items-center justify-between text-sm opacity-90">
                   <span className="inline-flex items-center gap-2">
                     <span className="h-2 w-2 rounded-full bg-current pulse-dot" />
@@ -247,15 +247,26 @@ export default function Desk() {
                   <span className="num text-xl">{elapsed(cur.status === 'serving' ? cur.startedAt : cur.calledAt, now)}</span>
                 </div>
                 <div className={`num mt-2 leading-[0.9] ${compact ? 'text-7xl' : 'text-[clamp(5rem,14vw,9rem)]'}`}>{cur.code}</div>
-                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-lg opacity-90">
-                  <span>{cur.buttonLabel} · esperó {waitMin(cur.createdAt, Date.parse(cur.calledAt ?? cur.createdAt))} min</span>
-                  {cur.dni && (
-                    <span className="inline-flex items-center gap-1.5 rounded-md bg-black/15 px-2 py-0.5 text-base">
-                      <IdCard size={16} /> DNI {cur.dni}
-                    </span>
+                <div className="mt-2 text-lg opacity-90">{cur.buttonLabel} · esperó {waitMin(cur.createdAt, Date.parse(cur.calledAt ?? cur.createdAt))} min</div>
+              </div>
+              {cur.patient ? (
+                <div className="flex flex-wrap items-center gap-4 border-b border-line bg-surface px-6 py-4">
+                  <Avatar name={cur.patient.name} size={44} />
+                  <div className="min-w-0 flex-1">
+                    <div className="display truncate text-xl font-semibold">{cur.patient.name}</div>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted">
+                      <span className="inline-flex items-center gap-1 font-mono"><IdCard size={14} /> {cur.patient.documentType} {cur.patient.document}</span>
+                      {cur.patient.phone && <span className="inline-flex items-center gap-1"><Phone size={13} /> {cur.patient.phone}</span>}
+                      <span className="badge badge-brand">{cur.patient.visits <= 1 ? 'Primera visita' : `${cur.patient.visits} visitas`}</span>
+                    </div>
+                  </div>
+                  {cur.patient.notes && (
+                    <div className="flex w-full items-start gap-2 rounded-lg bg-warn-soft px-3 py-2 text-[13px] text-warn"><StickyNote size={15} className="mt-0.5 shrink-0" /> {cur.patient.notes}</div>
                   )}
                 </div>
-              </div>
+              ) : (
+                <div className="flex items-center gap-2 border-b border-line px-6 py-3 text-[13px] text-muted"><UserRound size={15} /> Sin identificar{cur.dni ? ` · DNI ${cur.dni}` : ''}</div>
+              )}
               <div className="flex flex-wrap gap-2 border-t border-dashed border-line px-5 py-4">
                 {cur.status === 'called' ? (
                   <>
@@ -323,7 +334,8 @@ export default function Desk() {
                     <li key={w.id} className={`flex items-center gap-3 px-5 ${compact ? 'py-2' : 'py-3'} ${i === 0 ? 'bg-brand-soft/40' : ''}`}>
                       <span className={`num w-20 ${compact ? 'text-xl' : 'text-2xl'}`}>{w.code}</span>
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm">{w.buttonLabel}</div>
+                        <div className="truncate text-sm font-medium">{w.patientName ?? <span className="font-normal text-muted">Sin identificar</span>}</div>
+                        <div className="truncate text-xs text-muted">{w.buttonLabel}</div>
                         <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
                           <span className={`badge ${LEVEL[lvl]}`} title="Tiempo de espera">{m} min</span>
                           {w.priorityName && (

@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Copy, ImageUp, Trash2, Volume2 } from 'lucide-react'
+import { Copy, ImagePlus, ImageUp, Trash2, Volume2 } from 'lucide-react'
 import { api, type Settings } from '../lib/api'
 import { useLoad } from '../lib/live'
 import { Announcer, fillTemplate } from '../lib/sound'
 import { Logo } from '../components/Brand'
-import { Button, Card, ColorPicker, ErrorBox, Field, PageHeader, Spinner, Toggle, inputCls, useConfirm, useToast } from '../ui'
+import { Button, Card, ColorPicker, ErrorBox, Field, PageHeader, Segmented, Spinner, Toggle, inputCls, useConfirm, useToast } from '../ui'
 
 interface Sys { db: string; dbLatencyMs: number; server: string; database: string; timezone: string; wsClients: number; hub: string; node: string; uptimeSec: number; version: string }
 const TOKENS = ['{prefix}', '{number}', '{code}', '{sector}', '{desk}', '{place}']
@@ -14,6 +14,16 @@ const LAYOUTS: { v: Settings['tv_layout']; t: string; d: string }[] = [
   { v: 'media', t: 'Multimedia a pantalla completa', d: 'Videos/imágenes ocupan la pantalla; el llamado aparece encima unos segundos.' },
   { v: 'calls', t: 'Solo llamados', d: 'Sin multimedia. Ideal para salas grandes.' },
 ]
+
+const readDataUrl = (f: File) =>
+  new Promise<string>((res, rej) => {
+    const r = new FileReader()
+    r.onload = () => res(String(r.result))
+    r.onerror = rej
+    r.readAsDataURL(f)
+  })
+
+type MediaItem = { key: string; url: string; mime: string; uploadedAt: string }
 
 function Section({ title, hint, children, id }: { title: string; hint?: string; children: ReactNode; id?: string }) {
   return (
@@ -31,6 +41,9 @@ export default function SettingsPage() {
   const { data, error, loading } = useLoad(() => api<Settings>('/api/admin/settings'))
   const sys = useLoad(() => api<Sys>('/api/admin/system'))
   const brand = useLoad(() => api<{ logoVersion: string | null }>('/api/public/sectors'))
+  const media = useLoad(() => api<MediaItem[]>('/api/admin/media'))
+  const mediaFile = useRef<HTMLInputElement>(null)
+  const [uploading, setUploading] = useState(false)
   const [s, setS] = useState<Settings | null>(null)
   const [saved, setSaved] = useState<string>('')
   const [busy, setBusy] = useState(false)
@@ -86,12 +99,7 @@ export default function SettingsPage() {
   const uploadLogo = async (f: File) => {
     if (!['image/png', 'image/jpeg', 'image/webp'].includes(f.type)) return toast('El logo tiene que ser PNG, JPG o WEBP', 'error')
     if (f.size > 500_000) return toast('El logo no puede superar los 500 KB', 'error')
-    const dataUrl = await new Promise<string>((res, rej) => {
-      const r = new FileReader()
-      r.onload = () => res(String(r.result))
-      r.onerror = rej
-      r.readAsDataURL(f)
-    })
+    const dataUrl = await readDataUrl(f)
     try {
       await api('/api/admin/logo', { method: 'PUT', body: { dataUrl } })
       await brand.reload()
@@ -99,6 +107,29 @@ export default function SettingsPage() {
     } catch (e) {
       toast((e as Error).message, 'error')
     }
+  }
+  const uploadMedia = async (files: FileList) => {
+    setUploading(true)
+    try {
+      for (const f of Array.from(files)) {
+        if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(f.type)) { toast(`${f.name}: tiene que ser PNG, JPG, WEBP o GIF`, 'error'); continue }
+        if (f.size > 2_000_000) { toast(`${f.name}: supera los 2 MB`, 'error'); continue }
+        await api('/api/admin/media', { body: { dataUrl: await readDataUrl(f) } })
+      }
+      await media.reload()
+      if (!s?.tv_media_enabled) set('tv_media_enabled', true)
+      toast('Publicidad actualizada')
+    } catch (e) {
+      toast((e as Error).message, 'error')
+    } finally {
+      setUploading(false)
+      if (mediaFile.current) mediaFile.current.value = ''
+    }
+  }
+  const removeMedia = async (m: MediaItem) => {
+    await api(`/api/admin/media/${m.key}`, { method: 'DELETE' })
+    await media.reload()
+    toast('Imagen eliminada')
   }
   const removeLogo = async () => {
     if (!(await confirm({ title: 'Quitar logo', message: 'Se vuelve a mostrar el isotipo de CELTTO.', confirmLabel: 'Quitar', danger: true }))) return
@@ -164,10 +195,55 @@ export default function SettingsPage() {
         </Field>
       </Section>
 
-      <Section title="Multimedia de la TV" hint="Videos o imágenes (dirección http/https) que rotan en la TV. Una por línea.">
-        <Toggle checked={!!s.tv_media_enabled} onChange={(v) => set('tv_media_enabled', v)} label="Mostrar multimedia en la TV" />
-        <Field label="Direcciones de video o imagen"><textarea className={inputCls} rows={3} value={s.tv_media_urls || ''} onChange={(e) => set('tv_media_urls', e.target.value)} placeholder="https://ejemplo.com/aviso.mp4" /></Field>
-        <Field label="Segundos entre avisos"><input type="number" min={5} max={300} className={`${inputCls} max-w-40`} value={s.tv_media_interval_sec || 20} onChange={(e) => set('tv_media_interval_sec', Number(e.target.value))} /></Field>
+      <Section title="Publicidad en la TV" hint="Imágenes que rotan en el recuadro de publicidad del llamador. Cuando llaman un turno, el llamado aparece encima y queda visible al costado.">
+        <Toggle checked={!!s.tv_media_enabled} onChange={(v) => set('tv_media_enabled', v)} label="Mostrar publicidad en la TV" />
+        <input ref={mediaFile} type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={(e) => e.target.files?.length && void uploadMedia(e.target.files)} />
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          {(media.data ?? []).map((m) => (
+            <div key={m.key} className="group relative aspect-video overflow-hidden rounded-xl border border-line bg-paper">
+              <img src={m.url} alt="" className="h-full w-full object-cover transition group-hover:scale-105" />
+              <button onClick={() => void removeMedia(m)} className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-lg bg-black/60 text-white opacity-0 transition group-hover:opacity-100 focus:opacity-100" aria-label="Eliminar imagen">
+                <Trash2 size={15} />
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={() => mediaFile.current?.click()}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => { e.preventDefault(); if (e.dataTransfer.files.length) void uploadMedia(e.dataTransfer.files) }}
+            disabled={uploading}
+            className="flex aspect-video flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-line text-muted transition hover:border-brand hover:bg-brand-soft/40 hover:text-brand"
+          >
+            <ImagePlus size={22} />
+            <span className="text-[13px] font-medium">{uploading ? 'Subiendo…' : 'Subir imágenes'}</span>
+            <span className="text-[11px]">o arrastralas acá · máx. 2 MB</span>
+          </button>
+        </div>
+        <Field label="Videos o imágenes por dirección (opcional)" hint="Una dirección http/https por línea. Para videos usá .mp4 o .webm.">
+          <textarea className={inputCls} rows={2} value={s.tv_media_urls || ''} onChange={(e) => set('tv_media_urls', e.target.value)} placeholder="https://ejemplo.com/aviso.mp4" />
+        </Field>
+        <Field label="Segundos por imagen"><input type="number" min={5} max={300} className={`${inputCls} max-w-40`} value={s.tv_media_interval_sec || 20} onChange={(e) => set('tv_media_interval_sec', Number(e.target.value))} /></Field>
+      </Section>
+
+      <Section title="Identificación del paciente" hint="Cómo se identifica el paciente en el tótem antes de sacar turno.">
+        <Segmented
+          value={s.totem_patient_mode}
+          onChange={(v) => set('totem_patient_mode', v)}
+          options={[
+            { value: 'required', label: 'Obligatoria' },
+            { value: 'optional', label: 'Opcional' },
+            { value: 'off', label: 'Desactivada' },
+          ]}
+        />
+        <p className="text-[13px] text-muted">
+          {s.totem_patient_mode === 'required'
+            ? 'El paciente ingresa su documento. Si ya está registrado, pasa directo a los botones; si no, completa nombre y apellido una sola vez.'
+            : s.totem_patient_mode === 'optional'
+              ? 'Se pide el documento, pero el paciente puede continuar sin identificarse.'
+              : 'El tótem muestra directamente los botones, sin pedir datos.'}
+        </p>
+        <Toggle checked={!!s.priorities_enabled} onChange={(v) => set('priorities_enabled', v)} label="Habilitar prioridades" hint="Muestra los botones de atención preferencial/urgente en el tótem y la sección Prioridades. Apagado: todos los turnos se atienden por orden de llegada." />
       </Section>
 
       <Section title="Tótem y ticket">
@@ -183,7 +259,6 @@ export default function SettingsPage() {
         {s.totem_pin === '0000' && <p className="rounded-lg bg-warn-soft px-3 py-2 text-sm text-warn">El PIN sigue siendo el de fábrica (0000). Cambialo antes de poner el tótem en uso.</p>}
         <Field label="Texto al pie del ticket"><input className={inputCls} value={s.ticket_footer} onChange={(e) => set('ticket_footer', e.target.value)} /></Field>
         <Toggle checked={!!s.qr_ticket_enabled} onChange={(v) => set('qr_ticket_enabled', v)} label="QR en el ticket para seguir el turno desde el celular" hint="El paciente escanea y ve cuántas personas tiene adelante y a dónde ir cuando lo llaman." />
-        <Toggle checked={!!s.totem_dni_enabled} onChange={(v) => set('totem_dni_enabled', v)} label="Pedir documento en el tótem (opcional para el paciente)" hint="Aparece un teclado numérico en pantalla. El DNI queda guardado en el turno y se ve en el panel de la secretaria." />
       </Section>
 
       <Section title="Tiempos de espera y alertas" hint="Colores del semáforo en el panel de la secretaria y alertas del resumen.">

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Download, RefreshCw } from 'lucide-react'
 import { api } from '../lib/api'
 import { fmtMin, hhmm, todayStr } from '../lib/format'
-import { BarChart, HBars, Kpi } from '../components/Charts'
+import { BarChart, HBars, Kpi, fillHours } from '../components/Charts'
 import { Button, Card, ErrorBox, Field, PageHeader, Spinner, inputCls } from '../ui'
 import { STATUS } from './MasterOverview'
 
@@ -97,7 +97,7 @@ export default function Reports() {
           <div className="grid gap-4 lg:grid-cols-2">
             <Card className="p-5">
               <h3 className="mb-4 font-semibold">Turnos por hora del día</h3>
-              <BarChart data={data.byHour.map((h) => ({ label: `${h.hour}h`, value: h.count }))} />
+              <BarChart data={fillHours(data.byHour)} />
             </Card>
             <Card className="p-5">
               <h3 className="mb-4 font-semibold">{data.byDay.length > 1 ? 'Turnos por día' : 'Por estado'}</h3>

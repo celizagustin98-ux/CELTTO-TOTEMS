@@ -1,6 +1,6 @@
 {
   "name": "celtto-totems",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
   "type": "module",
   "description": "CELTTO-TOTEMS: gestión de turnos con tótem, panel de secretaria, llamador y pantalla de sala (Linux/Docker + PostgreSQL)",

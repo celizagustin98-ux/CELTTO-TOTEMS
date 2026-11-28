@@ -78,6 +78,16 @@ npm run typecheck  # tipos del servidor y de la web
 npm run build      # compilación de producción
 ```
 
+## Pacientes
+
+- Al entrar al tótem, el paciente ingresa su **documento** con el teclado en pantalla.
+- Si ya está registrado, lo saluda ("¡Hola, María G.!") y pasa a los botones.
+- Si no existe, completa **nombre y apellido** (teclado alfabético en pantalla) y queda registrado.
+- La secretaria ve nombre, documento, visitas y observaciones; el panel maestro tiene la base de pacientes
+  con búsqueda (sin importar tildes), ficha con historial y exportación.
+- La TV **nunca** muestra nombres, solo el código del turno.
+- En Configuración → Identificación del paciente: obligatoria, opcional o desactivada.
+
 ## Roles
 
 | Rol | Puede |

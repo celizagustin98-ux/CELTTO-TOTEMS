@@ -92,6 +92,7 @@ export interface Database {
     recall_count: number
     print_count: number
     dni: string | null
+    patient_id: number | null
   }
   counters: { counter_key: string; counter_value: number }
   ticket_events: {
@@ -121,6 +122,24 @@ export interface Database {
     created_at: string
   }
   settings: { setting_key: string; setting_value: string }
+  patients: {
+    id: Generated<number>
+    document_type: string
+    document: string
+    first_name: string
+    last_name: string
+    phone: string | null
+    email: string | null
+    birth_date: string | null
+    notes: string | null
+    search_name: string
+    visits: number
+    last_visit_at: string | null
+    source: string
+    active: number
+    created_at: string
+    updated_at: string
+  }
   assets: { asset_key: string; mime: string; data: string; updated_at: string }
 }
 

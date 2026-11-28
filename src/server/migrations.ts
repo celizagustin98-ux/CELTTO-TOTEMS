@@ -239,4 +239,39 @@ export const migrations: Record<string, Migration> = {
       }
     },
   },
+
+  '004_patients': {
+    async up(db: Kysely<any>) {
+      const id = pkId(db)
+      await db.schema
+        .createTable('patients')
+        .addColumn('id', 'integer', id)
+        .addColumn('document_type', 'varchar(10)', (c) => c.notNull().defaultTo('DNI'))
+        .addColumn('document', 'varchar(20)', (c) => c.notNull())
+        .addColumn('first_name', 'varchar(80)', (c) => c.notNull())
+        .addColumn('last_name', 'varchar(80)', (c) => c.notNull())
+        .addColumn('phone', 'varchar(30)')
+        .addColumn('email', 'varchar(120)')
+        .addColumn('birth_date', 'varchar(10)')
+        .addColumn('notes', 'varchar(500)')
+        // Nombre y apellido en minúsculas y sin tildes, para buscar "perez" y encontrar "Pérez"
+        .addColumn('search_name', 'varchar(170)', (c) => c.notNull().defaultTo(''))
+        .addColumn('visits', 'integer', (c) => c.notNull().defaultTo(0))
+        .addColumn('last_visit_at', 'varchar(30)')
+        .addColumn('source', 'varchar(20)', (c) => c.notNull().defaultTo('totem'))
+        .addColumn('active', 'integer', (c) => c.notNull().defaultTo(1))
+        .addColumn('created_at', 'varchar(30)', (c) => c.notNull())
+        .addColumn('updated_at', 'varchar(30)', (c) => c.notNull())
+        .execute()
+      await db.schema.createIndex('ux_patients_document').on('patients').columns(['document_type', 'document']).unique().execute()
+      await db.schema.createIndex('ix_patients_last_name').on('patients').columns(['last_name', 'first_name']).execute()
+      await db.schema.createIndex('ix_patients_search').on('patients').column('search_name').execute()
+
+      await db.schema.alterTable('tickets').addColumn('patient_id', 'integer').execute()
+      await db.schema.createIndex('ix_tickets_patient').on('tickets').column('patient_id').execute()
+      if (supportsAlterFk(db)) {
+        await db.schema.alterTable('tickets').addForeignKeyConstraint('fk_tickets_patient', ['patient_id'], 'patients', ['id']).execute()
+      }
+    },
+  },
 }

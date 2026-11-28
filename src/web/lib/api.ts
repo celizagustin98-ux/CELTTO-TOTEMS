@@ -45,6 +45,8 @@ export interface Settings {
   totem_pin: string
   totem_return_seconds: number
   totem_dni_enabled: boolean
+  totem_patient_mode: 'required' | 'optional' | 'off'
+  priorities_enabled: boolean
   totem_idle_enabled: boolean
   totem_idle_seconds: number
   qr_ticket_enabled: boolean

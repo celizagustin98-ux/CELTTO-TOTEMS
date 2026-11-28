@@ -35,7 +35,8 @@
     "openTotem": "Abrir tótem",
     "openTv": "Abrir pantalla de sala",
     "logout": "Cerrar sesión",
-    "master": "Panel maestro"
+    "master": "Panel maestro",
+    "patients": "Pacientes"
   },
   "totem": {
     "chooseSector": "Elegí tu secretaría",
@@ -83,7 +84,9 @@
     "ago": "hace {{n}} min",
     "now": "recién",
     "offline": "Sin conexión — reconectando",
-    "notConfigured": "TV no configurada"
+    "notConfigured": "TV no configurada",
+    "advertising": "Publicidad",
+    "called": "Turno llamado"
   },
   "ticket": {
     "yours": "Tu turno",
@@ -105,5 +108,31 @@
   },
   "voice": {
     "template": "Turno {prefix} {number}, pasar a {place}"
+  },
+  "id": {
+    "title": "Ingresá tu número de documento",
+    "subtitle": "Lo usamos para identificarte y agilizar tu atención.",
+    "continue": "Continuar",
+    "skip": "Continuar sin documento",
+    "checking": "Buscando…",
+    "invalid": "Revisá el número: debe tener entre 6 y 15 dígitos"
+  },
+  "reg": {
+    "title": "Es tu primera visita",
+    "subtitle": "Completá tus datos una sola vez. La próxima vez solo vas a necesitar tu documento.",
+    "firstName": "Nombre",
+    "lastName": "Apellido",
+    "document": "Documento",
+    "save": "Guardar y continuar",
+    "space": "Espacio",
+    "privacy": "Tus datos se usan solo para gestionar tu atención."
+  },
+  "flow": {
+    "hello": "¡Hola, {{name}}!",
+    "choose": "Elegí el motivo de tu visita",
+    "notYou": "¿No sos vos?",
+    "step1": "Documento",
+    "step2": "Motivo",
+    "step3": "Turno"
   }
 }
